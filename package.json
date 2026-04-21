@@ -1,0 +1,10 @@
+{
+  "name": "standalone-root",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix octo-client-shell install",
+    "dev": "npm --prefix octo-client-shell run dev",
+    "build": "npm --prefix octo-client-shell run build",
+    "preview": "npm --prefix octo-client-shell run preview"
+  }
+}
