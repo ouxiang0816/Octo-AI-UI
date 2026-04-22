@@ -36,6 +36,7 @@ export interface Msg {
   role: MsgRole;
   text: string;
   attachments?: Attachment[];
+  referencedAssets?: AssetRecord[];
   pages?: GeneratedPage[];
   thinking?: boolean;
   thinkingLines?: string[];
@@ -81,10 +82,42 @@ export interface Skill {
   };
 }
 
+export type AssetSourceType = 'platform' | 'personal';
+export type AssetType = 'design-spec' | 'component' | 'illustration' | 'icon' | 'research' | 'delivery' | 'template' | 'token';
+
+export interface AssetRecord {
+  asset_id: string;
+  source_type: AssetSourceType;
+  title: string;
+  asset_type: AssetType;
+  owner: string;
+  format: string;
+  updated_at: string;
+  tags: string[];
+  summary_for_ai: string;
+  citation_label: string;
+  applicable_scenarios: string[];
+  preview: {
+    kind: 'document' | 'palette' | 'canvas' | 'grid';
+    accent: string;
+    secondary: string;
+    label: string;
+  };
+  structured_payload: string;
+  version?: string;
+  authority_level?: '强制' | '标准' | '参考';
+  review_status?: '已审核' | '评审中';
+  upload_source?: 'cloud' | 'local';
+  visibility?: 'private';
+  recent?: boolean;
+  risk_note?: string;
+}
+
 export type RefDrawerItem =
   | { kind: 'doc'; doc: ResearchDoc }
   | { kind: 'component'; name: string }
-  | { kind: 'illustration'; name: string; color: string };
+  | { kind: 'illustration'; name: string; color: string }
+  | { kind: 'asset'; asset: AssetRecord };
 
 // ─── UI state ───────────────────────────────────────────────────────────────
 export type LeftTab = 'chat' | 'assets' | 'research' | 'skills';

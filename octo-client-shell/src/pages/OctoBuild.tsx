@@ -7,9 +7,9 @@ import {
   Sparkles, Plus, Send, Paperclip,
   ChevronDown, Check, Loader2, Copy,
   Monitor, Image, Layers, BarChart2, Play, Pause, Maximize2, Minimize2,
-  ExternalLink, LayoutGrid, Code, Upload, Minus, RotateCcw, ArrowLeft,
-  AtSign, FolderOpen, Heart, ChevronRight, X, Smartphone, Tablet, Share2, Download, Link2,
-  RefreshCw, Wand2, Users,
+  ExternalLink, LayoutGrid, Code, Upload, Minus, RotateCcw, ArrowLeft, FileText,
+  FolderOpen, Heart, ChevronRight, X, Smartphone, Tablet, Share2, Download, Link2,
+  RefreshCw, Wand2, Users, Video, Scissors, Paintbrush, Clock, Box, Palette, Pencil, Expand, Hand,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import html2canvas from 'html2canvas';
@@ -21,11 +21,35 @@ import {
   type SkillMarketCategory,
   type SkillMarketItem,
 } from '../data/skill-market-data';
+import {
+  loadEnabledPrototypeComponents,
+  PROTOTYPE_COMPONENT_LINKS_UPDATED_EVENT,
+  type LinkedPrototypeComponent,
+} from '../data/prototype-component-links';
+import {
+  appendGeneratedArtifactToProjectAssets,
+  loadProjectAssets,
+  PROJECT_ASSETS_UPDATED_EVENT,
+  type ArtifactWorkflowKey,
+} from '../data/project-assets-data';
+import { createSharedArtifact } from '../data/shared-artifacts';
+import {
+  DESIGN_SPECS,
+  DESIGN_SPEC_SOURCES,
+  ICONS,
+  ILLUSTRATIONS,
+  PROTOTYPE_DOMAINS,
+  USER_INSIGHT_TEMPLATES,
+  EXPERIENCE_EVAL_TEMPLATES,
+  type AssetDocCard,
+} from '../features/assets/mock-data';
 import imgA1 from '../assets/previews/AI功能Toolbar.jpg';
 import imgA3 from '../assets/previews/Dashboard图表.jpg';
 import imgA4 from '../assets/previews/Dashboard图表2.jpg';
 import imgA5 from '../assets/previews/天气卡片.jpg';
+import canvas1 from '../assets/canvas/Canvas1.webp';
 import canvasCase2 from '../assets/canvas/Canvas2.jpg';
+import canvas3 from '../assets/canvas/Canvas3.jpg';
 import codingCase from '../assets/canvas/CodingCase.jpg';
 import casePng from '../assets/canvas/case.png';
 import imgHealthApp from '../assets/demos/health-app-demo.png';
@@ -33,10 +57,55 @@ import { parseFigmaUrl, generateDemoStream, generateSvgFromHtml, type FigmaDesig
 import StarBorder from '../components/StarBorder';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-export type WorkflowType = 'ui-design' | 'demo' | 'creative' | 'research' | 'interview';
+export type WorkflowType =
+  | 'ui-design' | 'demo' | 'creative' | 'research' | 'interview'
+  | 'insight-viewpoint'
+  | 'insight-outline'
+  | 'insight-persona'
+  | 'insight-mindmap'
+  | 'insight-eval-question';
 type WorkspaceView = 'preview' | 'code';
 type ComposerMode = 'auto' | WorkflowType | 'review';
 type ComposerAgent = 'auto' | 'research' | 'ui-design' | 'demo' | 'creative' | 'review';
+type CanvaMode = 'image' | 'video' | 'edit';
+type CanvaEditTool = 'enhance' | 'remove-bg' | 'inpaint' | 'outpaint';
+
+interface CanvaState {
+  mode: CanvaMode;
+  status: 'idle' | 'awaiting-upload' | 'ready';
+  prompt: string;
+  imageModel: string;
+  imageRatio: string;
+  imageQuality: string;
+  videoModel: string;
+  videoFrameMode: string;
+  videoRatio: string;
+  videoDuration: string;
+  editTool?: CanvaEditTool;
+  attachmentNames: string[];
+  referenceImageName?: string | null;
+  firstFrameName?: string | null;
+  lastFrameName?: string | null;
+  updatedAt: number;
+}
+
+interface CanvaSubmissionPayload {
+  mode: CanvaMode;
+  prompt: string;
+  imageModel: string;
+  imageRatio: string;
+  imageQuality: string;
+  videoModel: string;
+  videoFrameMode: string;
+  videoRatio: string;
+  videoDuration: string;
+  editTool?: CanvaEditTool;
+  attachmentNames: string[];
+  referenceImageName?: string | null;
+  firstFrameName?: string | null;
+  lastFrameName?: string | null;
+  requiresUpload?: boolean;
+}
 
 // ─── 意图识别引擎 ─────────────────────────────────────────────────────────────
 // 多维度评分 + 置信度系统，替代原有单一正则匹配
@@ -90,6 +159,11 @@ const INTENT_RULES: Record<WorkflowType, IntentRule[]> = {
     { pattern: /设计|ui|ux|交互设计/, score: 3 },
     { pattern: /做.*页面|生成.*页面|帮我.*页面/, score: 2 },
   ],
+  'insight-viewpoint': [],
+  'insight-outline': [],
+  'insight-persona': [],
+  'insight-mindmap': [],
+  'insight-eval-question': [],
 };
 
 // 返回每种 workflow 的原始得分
@@ -97,6 +171,8 @@ function scoreIntents(text: string): Record<WorkflowType, number> {
   const t = text.toLowerCase();
   const scores: Record<WorkflowType, number> = {
     'interview': 0, 'research': 0, 'creative': 0, 'demo': 0, 'ui-design': 0,
+    'insight-viewpoint': 0, 'insight-outline': 0, 'insight-persona': 0,
+    'insight-mindmap': 0, 'insight-eval-question': 0,
   };
   for (const [wf, rules] of Object.entries(INTENT_RULES) as [WorkflowType, IntentRule[]][]) {
     for (const { pattern, score } of rules) {
@@ -128,6 +204,11 @@ const WORKFLOW_INTENT_META: Record<WorkflowType, { label: string; color: string;
   'creative':   { label: '创意生成',  color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
   'research':   { label: '竞品研究',  color: '#0891b2', bg: '#ecfeff', border: '#a5f3fc' },
   'interview':  { label: '用户访谈',  color: '#059669', bg: '#ecfdf5', border: '#a7f3d0' },
+  'insight-viewpoint':      { label: '观点解析',   color: '#6d28d9', bg: '#f5f3ff', border: '#ede9fe' },
+  'insight-outline':        { label: '按提纲聚类', color: '#6d28d9', bg: '#f5f3ff', border: '#ede9fe' },
+  'insight-persona':        { label: 'AI用户画像', color: '#6d28d9', bg: '#f5f3ff', border: '#ede9fe' },
+  'insight-mindmap':        { label: '思维导图',   color: '#6d28d9', bg: '#f5f3ff', border: '#ede9fe' },
+  'insight-eval-question':  { label: '评估问题整理', color: '#6d28d9', bg: '#f5f3ff', border: '#ede9fe' },
 };
 
 export interface ChatMsg {
@@ -139,6 +220,9 @@ export interface ChatMsg {
   thinkingLines?: string[];
   canvasType?: WorkflowType;
   isUpdate?: boolean;
+  artifactLabel?: string;
+  artifactMeta?: string;
+  imageOptions?: string[];
 }
 
 export interface OctoBuildState {
@@ -146,6 +230,7 @@ export interface OctoBuildState {
   activeWorkflow: WorkflowType | null;
   readyWorkflows: WorkflowType[];
   msgs: ChatMsg[];
+  canvaState?: CanvaState | null;
 }
 
 // ─── Static data ──────────────────────────────────────────────────────────────
@@ -198,7 +283,232 @@ const WORKFLOW_META: Record<WorkflowType, {
     badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
     workspaceLabel: '访谈报告',
   },
+  'insight-viewpoint': {
+    badge: 'Octo Insight',
+    fileLabel: '观点解析.Insight',
+    fileExt: 'Octo Insight · 观点解析',
+    accentClass: 'from-[#6d28d9] to-[#8b5cf6]',
+    badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
+    workspaceLabel: '观点解析',
+  },
+  'insight-outline': {
+    badge: 'Octo Insight',
+    fileLabel: '按提纲聚类.Insight',
+    fileExt: 'Octo Insight · 按提纲聚类',
+    accentClass: 'from-[#6d28d9] to-[#8b5cf6]',
+    badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
+    workspaceLabel: '按提纲聚类',
+  },
+  'insight-persona': {
+    badge: 'Octo Insight',
+    fileLabel: 'AI用户画像.Insight',
+    fileExt: 'Octo Insight · AI用户画像',
+    accentClass: 'from-[#6d28d9] to-[#8b5cf6]',
+    badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
+    workspaceLabel: 'AI用户画像',
+  },
+  'insight-mindmap': {
+    badge: 'Octo Insight',
+    fileLabel: '思维导图.Insight',
+    fileExt: 'Octo Insight · 思维导图',
+    accentClass: 'from-[#6d28d9] to-[#8b5cf6]',
+    badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
+    workspaceLabel: '思维导图',
+  },
+  'insight-eval-question': {
+    badge: 'Octo Insight',
+    fileLabel: '评估问题整理.Insight',
+    fileExt: 'Octo Insight · 评估问题整理',
+    accentClass: 'from-[#6d28d9] to-[#8b5cf6]',
+    badgeClass: 'bg-[#f5f3ff] text-[#6d28d9] border-[#ede9fe]',
+    workspaceLabel: '评估问题整理',
+  },
 };
+
+const DEFAULT_CANVA_STATE: CanvaState = {
+  mode: 'image',
+  status: 'idle',
+  prompt: '',
+  imageModel: '图片5.0 Lite',
+  imageRatio: '16:9',
+  imageQuality: '超清 4K',
+  videoModel: 'Seedance 2.0 Fast VIP',
+  videoFrameMode: '首尾帧',
+  videoRatio: '16:9',
+  videoDuration: '5s',
+  attachmentNames: [],
+  referenceImageName: null,
+  firstFrameName: null,
+  lastFrameName: null,
+  updatedAt: Date.now(),
+};
+
+function buildPrototypeComponentPromptSuffix(components: LinkedPrototypeComponent[]) {
+  if (!components.length) return '';
+
+  const grouped = components.reduce<Record<string, string[]>>((acc, component) => {
+    acc[component.domainLabel] ??= [];
+    acc[component.domainLabel].push(component.name);
+    return acc;
+  }, {});
+
+  const lines = Object.entries(grouped).map(([domainLabel, names]) => `${domainLabel}：${names.join('、')}`);
+  return `\n\n关联开发组件（请优先基于这些已启用组件生成原型）：\n${lines.join('\n')}`;
+}
+
+const CANVA_TYPE_OPTIONS: Array<{
+  id: CanvaMode;
+  label: string;
+  Icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { id: 'image', label: '图片生成', Icon: Image },
+  { id: 'video', label: '视频生成', Icon: Video },
+  { id: 'edit', label: 'AI 修图', Icon: Palette },
+];
+
+const CANVA_IMAGE_MODEL_OPTIONS = ['图片5.0 Lite', '图片5.0 Pro', '图片4.0'];
+const CANVA_VIDEO_MODEL_OPTIONS = ['Seedance 2.0 Fast VIP', 'Seedance 2.0 Pro', '视频5.0'];
+const CANVA_RATIO_OPTIONS = ['1:1', '16:9', '9:16', '4:3'];
+const CANVA_IMAGE_QUALITY_OPTIONS = ['高清 2K', '超清 4K'];
+const CANVA_VIDEO_FRAME_OPTIONS = ['首尾帧', '首帧', '尾帧', '无'];
+const CANVA_VIDEO_DURATION_OPTIONS = ['5s', '10s', '15s', '30s'];
+const CANVA_EDIT_TOOL_OPTIONS: Array<{
+  id: CanvaEditTool;
+  label: string;
+  description: string;
+  color: string;
+  bg: string;
+  Icon: React.ComponentType<{ size?: number }>;
+}> = [
+  { id: 'enhance', label: '变清晰', description: '提升图片清晰度', color: '#7c3aed', bg: '#f5f3ff', Icon: Wand2 },
+  { id: 'remove-bg', label: '抠图', description: '智能去除背景', color: '#db2777', bg: '#fdf2f8', Icon: Scissors },
+  { id: 'inpaint', label: '局部重绘', description: '重新生成选中区域', color: '#d97706', bg: '#fff7ed', Icon: Paintbrush },
+  { id: 'outpaint', label: '扩图', description: '智能扩展边缘', color: '#059669', bg: '#ecfdf5', Icon: Maximize2 },
+];
+
+function getCanvaModeLabel(mode: CanvaMode): string {
+  return CANVA_TYPE_OPTIONS.find((item) => item.id === mode)?.label ?? '图片生成';
+}
+
+function getCanvaEditToolLabel(tool?: CanvaEditTool): string {
+  return CANVA_EDIT_TOOL_OPTIONS.find((item) => item.id === tool)?.label ?? 'AI 修图';
+}
+
+function buildCanvaState(payload: CanvaSubmissionPayload): CanvaState {
+  return {
+    mode: payload.mode,
+    status: payload.requiresUpload ? 'awaiting-upload' : 'ready',
+    prompt: payload.prompt,
+    imageModel: payload.imageModel,
+    imageRatio: payload.imageRatio,
+    imageQuality: payload.imageQuality,
+    videoModel: payload.videoModel,
+    videoFrameMode: payload.videoFrameMode,
+    videoRatio: payload.videoRatio,
+    videoDuration: payload.videoDuration,
+    editTool: payload.editTool,
+    attachmentNames: payload.attachmentNames,
+    referenceImageName: payload.referenceImageName ?? null,
+    firstFrameName: payload.firstFrameName ?? null,
+    lastFrameName: payload.lastFrameName ?? null,
+    updatedAt: Date.now(),
+  };
+}
+
+function getCanvaArtifactMeta(canvaState: CanvaState | CanvaSubmissionPayload | null | undefined): { label: string; meta: string } {
+  if (!canvaState) {
+    return { label: WORKFLOW_META.creative.fileLabel, meta: WORKFLOW_META.creative.fileExt };
+  }
+
+  if (canvaState.mode === 'video') {
+    return {
+      label: canvaState.prompt ? `创意视频 · ${extractTopic(canvaState.prompt)}` : '创意视频结果',
+      meta: `Octo Canvas · ${canvaState.videoModel} · ${canvaState.videoRatio} · ${canvaState.videoDuration}`,
+    };
+  }
+
+  if (canvaState.mode === 'edit') {
+    return {
+      label: `${getCanvaEditToolLabel(canvaState.editTool)}编辑结果`,
+      meta: `Octo Canvas · 修图工作台${canvaState.attachmentNames.length > 0 ? ` · ${canvaState.attachmentNames.length} 张图片` : ''}`,
+    };
+  }
+
+  return {
+    label: canvaState.prompt ? `创意图片 · ${extractTopic(canvaState.prompt)}` : '创意图片结果',
+    meta: `Octo Canvas · ${canvaState.imageModel} · ${canvaState.imageRatio} · ${canvaState.imageQuality}`,
+  };
+}
+
+function getWorkflowMetaForState(workflow: WorkflowType, canvaState?: CanvaState | null) {
+  if (workflow !== 'creative') return WORKFLOW_META[workflow];
+  const canvaMeta = getCanvaArtifactMeta(canvaState);
+  return {
+    ...WORKFLOW_META.creative,
+    fileLabel: canvaMeta.label,
+    fileExt: canvaMeta.meta,
+    workspaceLabel: canvaState?.mode === 'video'
+      ? '视频结果预览'
+      : canvaState?.mode === 'edit'
+        ? '修图编辑工作台'
+        : '图片结果预览',
+  };
+}
+
+function getCanvaThinkingLines(payload: CanvaSubmissionPayload): string[] {
+  if (payload.mode === 'video') {
+    return [
+      'phase|1|意图理解',
+      `thought|2|解析视频描述与镜头风格，确认输出比例 ${payload.videoRatio} 与时长 ${payload.videoDuration}。`,
+      'phase|2|思考规划',
+      `thought|2|结合 ${payload.videoFrameMode} 设置组织镜头衔接，锁定模型 ${payload.videoModel}。`,
+      'phase|3|工具调用',
+      `tool|Octo Canvas|renderVideo · model=${payload.videoModel} · ratio=${payload.videoRatio} · duration=${payload.videoDuration}`,
+      'phase|4|结果生成',
+      'thought|1|首版视频已生成，右侧结果区可继续预览和追加修改。',
+    ];
+  }
+
+  if (payload.mode === 'edit') {
+    return [
+      'phase|1|素材检查',
+      `thought|2|已收到待处理图片，当前执行 ${getCanvaEditToolLabel(payload.editTool)}。`,
+      'phase|2|局部规划',
+      'thought|2|保留主体构图和视觉语义，仅对当前工具影响区域进行处理。',
+      'phase|3|工具调用',
+      `tool|Octo Canvas|editImage · tool=${payload.editTool} · assets=${payload.attachmentNames.length}`,
+      'phase|4|结果生成',
+      'thought|1|编辑结果已生成，右侧可以查看前后对比并继续处理。',
+    ];
+  }
+
+  return [
+    'phase|1|意图理解',
+    `thought|2|解析画面主体、风格和氛围，锁定输出比例 ${payload.imageRatio}。`,
+    'phase|2|思考规划',
+    `thought|2|基于 ${payload.imageModel} 组织构图与光影，目标清晰度 ${payload.imageQuality}。`,
+    'phase|3|工具调用',
+    `tool|Octo Canvas|renderImage · model=${payload.imageModel} · ratio=${payload.imageRatio} · quality=${payload.imageQuality}`,
+    'phase|4|结果生成',
+    'thought|1|首版图片已生成，右侧结果区可继续下载、局部重绘或再次生成。',
+  ];
+}
+
+function getCanvaReplyText(payload: CanvaSubmissionPayload): string {
+  if (payload.mode === 'video') {
+    return `创意视频已生成：\n\n· 模型：${payload.videoModel}\n· 画幅：${payload.videoRatio}\n· 时长：${payload.videoDuration}\n· 镜头控制：${payload.videoFrameMode}\n\n右侧结果页签已切换到视频预览。`;
+  }
+
+  if (payload.mode === 'edit') {
+    if (payload.requiresUpload) {
+      return `已切换到 ${getCanvaEditToolLabel(payload.editTool)}。\n\n请先上传需要处理的图片，我会在右侧结果区打开修图工作台。`;
+    }
+
+    return `已完成 ${getCanvaEditToolLabel(payload.editTool)} 处理：\n\n· 已保留主体构图和内容语义\n· 右侧可查看编辑前后对比\n· 继续输入新的要求可迭代这一版结果`;
+  }
+
+  return `创意图片已生成：\n\n· 模型：${payload.imageModel}\n· 画幅：${payload.imageRatio}\n· 清晰度：${payload.imageQuality}\n${payload.referenceImageName ? `· 参考图：${payload.referenceImageName}\n` : ''}\n右侧结果页签已切换到图片预览。`;
+}
 
 // ─── 动态文案生成器 ────────────────────────────────────────────────────────────
 // 根据用户 prompt 提取主题词，生成与上下文相关的思考步骤和回复文案
@@ -246,6 +556,16 @@ function collectPromptHighlights(prompt: string, wf: WorkflowType): string[] {
         return ['分析内容与结论结构'];
       case 'interview':
         return ['访谈内容与洞察输出'];
+      case 'insight-viewpoint':
+        return ['访谈观点与用户原声'];
+      case 'insight-outline':
+        return ['提纲层级与主题聚类'];
+      case 'insight-persona':
+        return ['用户行为与画像特征'];
+      case 'insight-mindmap':
+        return ['核心发现与关键结论'];
+      case 'insight-eval-question':
+        return ['任务问题与用户原声'];
     }
   }
 
@@ -259,6 +579,11 @@ function generateFollowUpCopy(wf: WorkflowType, topic: string, highlights: strin
     'creative': `我已经按照「${topic}」重新生成了这一版视觉内容。`,
     'research': `我已经基于这次输入，补充并重组了「${topic}」相关的分析内容。`,
     'interview': `我已经围绕「${topic}」更新了这版用研与访谈输出。`,
+    'insight-viewpoint': `我已经围绕「${topic}」更新了观点解析表。`,
+    'insight-outline': `我已经围绕「${topic}」更新了提纲聚类导图。`,
+    'insight-persona': `我已经围绕「${topic}」更新了用户画像卡片。`,
+    'insight-mindmap': `我已经围绕「${topic}」更新了思维导图。`,
+    'insight-eval-question': `我已经围绕「${topic}」更新了评估问题整理表。`,
   };
 
   const detailMap: Record<WorkflowType, string[]> = {
@@ -286,6 +611,31 @@ function generateFollowUpCopy(wf: WorkflowType, topic: string, highlights: strin
       `· 已更新 ${highlights[0] ?? '访谈内容与洞察输出'}`,
       `· 这一版重点补强了 ${highlights[1] ?? '问题框架、用户反馈与结论整理'}`,
       '· 右侧报告可继续查看本轮更新后的内容',
+    ],
+    'insight-viewpoint': [
+      `· 已更新 ${highlights[0] ?? '访谈观点与用户原声'}`,
+      `· 当前结果重点覆盖 ${highlights[1] ?? '问题维度、观点归类与场景标注'}`,
+      '· 右侧观点解析表已更新，可继续补充访谈内容',
+    ],
+    'insight-outline': [
+      `· 已更新 ${highlights[0] ?? '提纲层级与主题聚类'}`,
+      `· 当前结果重点覆盖 ${highlights[1] ?? '大纲结构、关键词标签与分支关系'}`,
+      '· 右侧聚类导图已更新，可继续调整提纲结构',
+    ],
+    'insight-persona': [
+      `· 已更新 ${highlights[0] ?? '用户行为与画像特征'}`,
+      `· 当前结果重点覆盖 ${highlights[1] ?? '角色标签、目标动机与痛点语录'}`,
+      '· 右侧用户画像卡片已更新，可继续切换查看',
+    ],
+    'insight-mindmap': [
+      `· 已更新 ${highlights[0] ?? '核心发现与关键结论'}`,
+      `· 当前结果重点覆盖 ${highlights[1] ?? '发现梳理、期望归纳与结论提炼'}`,
+      '· 右侧思维导图已更新，可继续补充分析维度',
+    ],
+    'insight-eval-question': [
+      `· 已更新 ${highlights[0] ?? '任务问题与用户原声'}`,
+      `· 当前结果重点覆盖 ${highlights[1] ?? '任务列表、可用性问题与对应语录'}`,
+      '· 右侧评估问题整理表已更新，可继续补充任务',
     ],
   };
 
@@ -377,6 +727,81 @@ function generateAIResponse(wf: WorkflowType, prompt: string): { thinkingLines: 
       text: `用研报告已生成：\n\n· 研究主题：${topic}\n· 访谈大纲（4 个维度 · 12 题）\n· 3 位典型用户深度访谈记录\n· 核心用户洞察提炼\n· 设计改进建议\n\n右侧可切换查看各人设访谈记录与完整报告。`,
       canvasType: 'interview',
     };
+
+    case 'insight-viewpoint': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|2|分析「${topic}」访谈内容，提取用户观点与核心诉求。`,
+        `phase|2|思考规划`,
+        `thought|2|按访谈问题维度拆解：行为背景 → 用户观点 → 场景主体 → 用户原声。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|parseTranscript · topic="${topic}" → 提取 8 组观点对`,
+        `phase|4|结果生成`,
+        `thought|2|观点归类完成，用户原声与场景匹配校验通过，生成观点解析表。`,
+      ],
+      text: `观点解析已完成：\n\n· 分析主题：${topic}\n· 提取 8 组访谈问题-观点对\n· 场景主体与用户原声已关联\n· 右侧已展示观点解析表\n\n可继续补充访谈内容迭代分析。`,
+      canvasType: 'insight-viewpoint',
+    };
+
+    case 'insight-outline': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|2|理解「${topic}」访谈提纲结构，识别核心主题与分支层级。`,
+        `phase|2|思考规划`,
+        `thought|2|按提纲层级聚类：核心主题 → 4 大维度 → 关键词标签。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|clusterOutline · topic="${topic}" → 识别 4 个主题分支，生成 16 个关键词`,
+        `phase|4|结果生成`,
+        `thought|2|聚类结构校验通过，关键词标签与主题匹配度 > 90%，生成导图。`,
+      ],
+      text: `按提纲聚类已完成：\n\n· 分析主题：${topic}\n· 识别 4 个核心主题分支\n· 生成 16 个关键词标签\n· 右侧已展示提纲聚类思维导图\n\n可继续调整主题层级或补充关键词。`,
+      canvasType: 'insight-outline',
+    };
+
+    case 'insight-persona': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|2|基于「${topic}」访谈内容，分析用户行为模式与群体特征。`,
+        `phase|2|思考规划`,
+        `thought|2|识别行为模式 → 构建用户群 → 提炼角色标签 / 目标 / 痛点 / 语录。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|extractPersonas · topic="${topic}" → 识别 3 类典型用户群体`,
+        `phase|4|结果生成`,
+        `thought|2|画像卡片结构完整，角色标签与语录支撑充分，生成用户画像。`,
+      ],
+      text: `用户画像已生成：\n\n· 分析主题：${topic}\n· 识别 3 类典型用户群体\n· 每类画像包含角色 / 目标 / 痛点 / 语录\n· 右侧已展示可视化画像卡片\n\n可点击顶部 Tab 切换不同画像。`,
+      canvasType: 'insight-persona',
+    };
+
+    case 'insight-mindmap': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|2|从「${topic}」访谈中抽取核心发现、用户期望与关键结论。`,
+        `phase|2|思考规划`,
+        `thought|2|三列结构梳理：核心发现 → 用户期望 → 关键结论，每列 4-5 条 bullet。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|extractFindings · topic="${topic}" → 抽取 12 条核心条目`,
+        `phase|4|结果生成`,
+        `thought|2|发现-期望-结论链条完整，逻辑一致性校验通过，生成思维导图。`,
+      ],
+      text: `思维导图已生成：\n\n· 分析主题：${topic}\n· 核心发现 / 用户期望 / 关键结论 三列结构\n· 共 12 条核心洞察条目\n· 右侧已展示思维导图\n\n可继续补充分析维度。`,
+      canvasType: 'insight-mindmap',
+    };
+
+    case 'insight-eval-question': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|2|整理「${topic}」评估任务中的可用性问题与用户原声。`,
+        `phase|2|思考规划`,
+        `thought|2|解析任务列表 → 匹配可用性问题 → 关联用户原声，共 8 行。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|parseEvalTasks · topic="${topic}" → 提取 5 个任务，匹配 8 个问题`,
+        `phase|4|结果生成`,
+        `thought|2|任务-问题-原声关联完整，生成评估问题整理表。`,
+      ],
+      text: `评估问题整理已完成：\n\n· 分析主题：${topic}\n· 提取 5 个评估任务\n· 匹配 8 个可用性问题与用户原声\n· 右侧已展示评估问题整理表\n\n可继续补充评估任务或调整分类。`,
+      canvasType: 'insight-eval-question',
+    };
   }
 }
 
@@ -450,6 +875,71 @@ function generateFollowUpReply(wf: WorkflowType, prompt: string): { thinkingLine
       ],
       text: generateFollowUpCopy(wf, topic, highlights),
     };
+    case 'insight-viewpoint': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|1|补充「${highlights.join(' / ')}」维度，回查观点解析表。`,
+        `phase|2|思考规划`,
+        `thought|1|定位受影响的问题-观点对，增量更新，保留已有归类。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|patchViewpoints · target="${highlights[0]}" → 更新 2 组观点对`,
+        `phase|4|结果生成`,
+        `thought|1|解析表一致性校验通过，输出更新版本。`,
+      ],
+      text: generateFollowUpCopy(wf, topic, highlights),
+    };
+    case 'insight-outline': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|1|调整「${highlights.join(' / ')}」分支结构，检查提纲层级。`,
+        `phase|2|思考规划`,
+        `thought|1|只调整受影响的主题节点，保留其余分支不变。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|patchOutline · target="${highlights[0]}" → 更新 1 个主题分支，3 个关键词`,
+        `phase|4|结果生成`,
+        `thought|1|聚类结构一致性校验通过，输出更新版本。`,
+      ],
+      text: generateFollowUpCopy(wf, topic, highlights),
+    };
+    case 'insight-persona': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|1|更新「${highlights.join(' / ')}」画像特征，回查用户群数据。`,
+        `phase|2|思考规划`,
+        `thought|1|定位受影响的画像卡片，增量更新标签与语录。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|patchPersonas · target="${highlights[0]}" → 更新 1 张画像卡片`,
+        `phase|4|结果生成`,
+        `thought|1|画像一致性校验通过，输出更新版本。`,
+      ],
+      text: generateFollowUpCopy(wf, topic, highlights),
+    };
+    case 'insight-mindmap': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|1|补充「${highlights.join(' / ')}」条目，回查三列结构。`,
+        `phase|2|思考规划`,
+        `thought|1|定位受影响的列，增量添加条目，保留其余内容不变。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|patchMindmap · target="${highlights[0]}" → 新增 2 条核心条目`,
+        `phase|4|结果生成`,
+        `thought|1|三列结构一致性校验通过，输出更新版本。`,
+      ],
+      text: generateFollowUpCopy(wf, topic, highlights),
+    };
+    case 'insight-eval-question': return {
+      thinkingLines: [
+        `phase|1|意图理解`,
+        `thought|1|补充「${highlights.join(' / ')}」维度，回查评估任务列表。`,
+        `phase|2|思考规划`,
+        `thought|1|定位受影响的任务-问题对，增量更新，保留已有整理结果。`,
+        `phase|3|工具调用`,
+        `tool|Octo Insight|patchEvalQuestions · target="${highlights[0]}" → 更新 2 条问题记录`,
+        `phase|4|结果生成`,
+        `thought|1|整理表一致性校验通过，输出更新版本。`,
+      ],
+      text: generateFollowUpCopy(wf, topic, highlights),
+    };
   }
 }
 
@@ -466,6 +956,11 @@ const WORKFLOW_ARTIFACTS: Record<WorkflowType, {
   'creative':  { badge: 'Octo Canvas',  Icon: Wand2,  label: '开发工程师场景图',                          meta: 'Octo Canvas · 创意图像',          iconColor: '#d97706', iconBg: '#fffbeb' },
   'research':  { badge: 'Octo Insight', Icon: Users,  label: '算子开发工具竞品分析报告.Insight',      meta: 'Octo Insight · 行业洞察',         iconColor: '#0891b2', iconBg: '#f0f9ff' },
   'interview': { badge: 'Octo Insight', Icon: Users,  label: '跑步App用研报告.Insight',              meta: 'Octo Insight · 访谈报告',         iconColor: '#6d28d9', iconBg: '#f5f3ff' },
+  'insight-viewpoint':     { badge: 'Octo Insight', Icon: Users,  label: '观点解析.Insight',            meta: 'Octo Insight · 观点解析',         iconColor: '#6d28d9', iconBg: '#f5f3ff' },
+  'insight-outline':       { badge: 'Octo Insight', Icon: Users,  label: '按提纲聚类.Insight',          meta: 'Octo Insight · 按提纲聚类',       iconColor: '#6d28d9', iconBg: '#f5f3ff' },
+  'insight-persona':       { badge: 'Octo Insight', Icon: Users,  label: 'AI用户画像.Insight',          meta: 'Octo Insight · AI用户画像',       iconColor: '#6d28d9', iconBg: '#f5f3ff' },
+  'insight-mindmap':       { badge: 'Octo Insight', Icon: Users,  label: '思维导图.Insight',            meta: 'Octo Insight · 思维导图',         iconColor: '#6d28d9', iconBg: '#f5f3ff' },
+  'insight-eval-question': { badge: 'Octo Insight', Icon: Users,  label: '评估问题整理.Insight',        meta: 'Octo Insight · 评估问题整理',     iconColor: '#6d28d9', iconBg: '#f5f3ff' },
 };
 
 const QUICK_SCENARIO_PROMPTS: Array<{ icon: string; label: string; prompt: string; workflow: WorkflowType }> = [
@@ -603,6 +1098,78 @@ const personas: Persona[] = [
 ];
 
 export { personas };`,
+  'insight-viewpoint': `// 访谈观点解析表
+interface ViewpointRow {
+  question: string;
+  viewpoint: string;
+  scene: string;
+  quote: string;
+}
+
+const rows: ViewpointRow[] = [
+  { question: '您通常在什么时间段跑步？', viewpoint: '倾向晨跑，避开通勤高峰', scene: '户外公园', quote: '天气好的时候就想出去跑一圈' },
+  { question: '跑步时遇到最大的挑战？', viewpoint: '配速不稳定，不知何时补给', scene: '长距离赛事', quote: '跑到一半就不知道该不该喝水了' },
+];
+
+export { rows };`,
+  'insight-outline': `// 按提纲聚类思维导图
+interface OutlineNode {
+  title: string;
+  keywords: string[];
+}
+
+const nodes: OutlineNode[] = [
+  { title: '动机与目标', keywords: ['健康管理', '社交激励', '个人成就'] },
+  { title: '行为习惯', keywords: ['晨跑优先', '固定路线', '音乐伴跑'] },
+  { title: '痛点障碍', keywords: ['配速不稳', '天气限制', '动力缺失'] },
+  { title: '需求期望', keywords: ['智能提醒', '成就系统', '社群互动'] },
+];
+
+export { nodes };`,
+  'insight-persona': `// AI 用户画像
+interface PersonaCard {
+  name: string;
+  age: number;
+  job: string;
+  tags: string[];
+  goals: string[];
+  painPoints: string[];
+  quote: string;
+}
+
+const personas: PersonaCard[] = [
+  { name: '小李', age: 24, job: '产品经理', tags: ['自律', '目标导向'], goals: ['减重 10kg', '建立规律运动习惯'], painPoints: ['跑步节奏感差', '缺乏科学训练计划'], quote: '我需要有人告诉我今天该怎么跑' },
+  { name: '阿杰', age: 29, job: '运营', tags: ['社交驱动', '重视排名'], goals: ['和朋友一起跑', '提升排名'], painPoints: ['社交功能单一', '缺乏挑战赛'], quote: '有人一起跑才更有动力' },
+  { name: '老王', age: 38, job: '工程师', tags: ['数据控', '专业跑者'], goals: ['完赛全马', '优化配速'], painPoints: ['数据维度不足', '恢复建议缺失'], quote: '我需要更专业的数据分析' },
+];
+
+export { personas };`,
+  'insight-mindmap': `// 思维导图三列
+interface MindMapColumn {
+  title: string;
+  items: string[];
+}
+
+const columns: MindMapColumn[] = [
+  { title: '核心发现', items: ['用户运动频次集中在周末', '配速焦虑是最高频痛点', '社交驱动占用户动力 40%'] },
+  { title: '用户期望', items: ['个性化配速建议', '社群激励机制', '天气/路线推荐', '成就徽章体系', 'AI 训练计划'] },
+  { title: '关键结论', items: ['初级用户最需要引导而非功能堆砌', '社交功能优先级应高于数据记录', '\"够用就好\"是主流心理模型'] },
+];
+
+export { columns };`,
+  'insight-eval-question': `// 评估问题整理
+interface EvalRow {
+  task: string;
+  issue: string;
+  quote: string;
+}
+
+const rows: EvalRow[] = [
+  { task: '注册登录任务', issue: '用户未注意到隐私协议，直接点了跳过', quote: '这里要我同意什么？' },
+  { task: '配置训练计划', issue: '步骤过多，完成率低于 30%', quote: '我以为设置好了，原来没有' },
+];
+
+export { rows };`,
 };
 
 function copyComputedStyles(source: Element, target: Element) {
@@ -921,7 +1488,13 @@ interface UIDesignParams {
 
 const COLOR_OPTIONS = ['#A3E635', '#FB923C', '#38BDF8', '#F472B6', '#A78BFA'];
 
-function UIDesignCanvas() {
+function UIDesignCanvas({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
   const [primaryColor, setPrimaryColor] = useState('#A3E635');
   const [cardRadius, setCardRadius] = useState(16);
 
@@ -979,7 +1552,21 @@ function UIDesignCanvas() {
         onMouseLeave={onMouseUp}
       >
         {/* Toolbar — top right */}
-        <div className="absolute top-3 right-3 z-10">
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+          <button
+            onClick={() => onSaveToProjectAssets?.()}
+            className="flex items-center gap-1 h-8 px-2 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
+          >
+            <FolderOpen size={11} />
+            保存至项目资产
+          </button>
+          <button
+            onClick={() => onShare?.()}
+            className="flex items-center gap-1 h-8 px-2 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
+          >
+            <Share2 size={11} />
+            分享
+          </button>
           <button
             onClick={() => { window.open('https://www.figma.com/', '_blank'); }}
             className="flex items-center gap-1 h-8 px-2 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
@@ -1604,11 +2191,21 @@ export function DemoCanvas({
   toolbarLeftPadding = 0,
   generatedHtml,
   onCopyAsDesign,
+  onSaveToProjectAssets,
+  onShare,
+  linkedPrototypeComponents = [],
+  selectedPrototypeComponentIds = [],
+  onTogglePrototypeComponent,
 }: {
   onToast?: (message: string) => void;
   toolbarLeftPadding?: number;
   generatedHtml?: string | null;
   onCopyAsDesign?: () => Promise<void>;
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+  linkedPrototypeComponents?: LinkedPrototypeComponent[];
+  selectedPrototypeComponentIds?: string[];
+  onTogglePrototypeComponent?: (componentId: string) => void;
 }) {
   const [demoView, setDemoView] = useState<DemoView>('preview');
   const [device, setDevice] = useState<DeviceType>('app');
@@ -1713,6 +2310,20 @@ export function DemoCanvas({
         </div>
       )}
       <div className="flex-1" />
+      <button
+        onClick={() => onSaveToProjectAssets?.()}
+        className="flex items-center gap-1 h-8 px-2 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
+      >
+        <FolderOpen size={11} />
+        保存至项目资产
+      </button>
+      <button
+        onClick={() => onShare?.()}
+        className="flex items-center gap-1 h-8 px-2 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
+      >
+        <Share2 size={11} />
+        分享
+      </button>
       {/* 复制为设计稿 */}
       <button
         onClick={() => {
@@ -1782,39 +2393,42 @@ export function DemoCanvas({
   const mainContent = (
     <div className="relative h-full flex flex-col">
       {toolbar}
-      <AnimatePresence mode="wait">
-        {demoView === 'preview' ? (
-          <motion.div key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
-            className="flex-1 relative overflow-hidden bg-transparent flex flex-col"
-          >
-            {/* Canvas content */}
-            <div className={`flex-1 flex ${device === 'app' && !hasAiHtml ? 'items-center justify-center pb-5' : ''} overflow-hidden`}>
-              {previewContent}
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div key="code" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
-            className="flex-1 flex flex-col bg-white relative"
-          >
-            <div className="px-4 py-2 border-b border-[rgba(25,25,25,0.07)] flex items-center justify-between shrink-0 bg-white">
-              <span className="text-[10px] text-[#aaa] font-mono">{codeFileName}</span>
-              <button onClick={() => navigator.clipboard.writeText(displayCode).catch(()=>{})}
-                className="flex items-center gap-1 text-[10px] text-[#999] hover:text-[#333] transition-colors px-2 py-1 rounded-md hover:bg-[#f5f5f5]">
-                <Copy size={10} /> 复制
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto flex bg-white">
-              <div className="bg-[#fafafa] border-r border-[rgba(25,25,25,0.06)] px-3 pt-4 select-none shrink-0 w-10">
-                {displayCode.split('\n').map((_,i) => (
-                  <div key={i} className="text-[10px] text-[#ccc] font-mono leading-[1.6] text-right">{i+1}</div>
-                ))}
-              </div>
-              <textarea className="flex-1 p-4 text-[12px] leading-[1.6] resize-none outline-none font-mono bg-white text-[#333] overflow-auto"
-                value={displayCode} readOnly spellCheck={false} style={{ tabSize: 2 }} />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-w-0">
+          <AnimatePresence mode="wait">
+            {demoView === 'preview' ? (
+              <motion.div key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
+                className="h-full relative overflow-hidden bg-transparent flex flex-col"
+              >
+                <div className={`flex-1 flex ${device === 'app' && !hasAiHtml ? 'items-center justify-center pb-5' : ''} overflow-hidden`}>
+                  {previewContent}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div key="code" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
+                className="h-full flex flex-col bg-white relative"
+              >
+                <div className="px-4 py-2 border-b border-[rgba(25,25,25,0.07)] flex items-center justify-between shrink-0 bg-white">
+                  <span className="text-[10px] text-[#aaa] font-mono">{codeFileName}</span>
+                  <button onClick={() => navigator.clipboard.writeText(displayCode).catch(()=>{})}
+                    className="flex items-center gap-1 text-[10px] text-[#999] hover:text-[#333] transition-colors px-2 py-1 rounded-md hover:bg-[#f5f5f5]">
+                    <Copy size={10} /> 复制
+                  </button>
+                </div>
+                <div className="flex-1 overflow-auto flex bg-white">
+                  <div className="bg-[#fafafa] border-r border-[rgba(25,25,25,0.06)] px-3 pt-4 select-none shrink-0 w-10">
+                    {displayCode.split('\n').map((_,i) => (
+                      <div key={i} className="text-[10px] text-[#ccc] font-mono leading-[1.6] text-right">{i+1}</div>
+                    ))}
+                  </div>
+                  <textarea className="flex-1 p-4 text-[12px] leading-[1.6] resize-none outline-none font-mono bg-white text-[#333] overflow-auto"
+                    value={displayCode} readOnly spellCheck={false} style={{ tabSize: 2 }} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 
@@ -1830,94 +2444,39 @@ export function DemoCanvas({
 }
 
 // ─── CreativeCanvas ───────────────────────────────────────────────────────────
-type CreativeImageAction = {
-  id: string;
-  label: string;
-  Icon: React.ComponentType<{ size?: number }>;
-};
-
-const CREATIVE_META_TAGS = ['图片5.0 Lite', '智能比例', '2K'];
-
 const CREATIVE_DEFAULT_PROMPT = '软件工程师查看代码、专注专业、蓝灰色调、科技简洁风';
+const CREATIVE_RESULT_IMAGES = [canvas1, canvasCase2, canvas3, codingCase];
 
-const CREATIVE_RESULT_IMAGES = [codingCase, canvasCase2];
-
-const CREATIVE_BOTTOM_ACTIONS: CreativeImageAction[] = [
-  { id: 'ultra-hd', label: '超高清', Icon: Sparkles },
-  { id: 'high-def', label: '高清', Icon: Image },
-  { id: 'local-redraw', label: '局部重绘', Icon: Wand2 },
-  { id: 'expand-image', label: '扩图', Icon: Maximize2 },
-  { id: 'gen-video', label: '生成视频', Icon: Play },
-  { id: 'remove-brush', label: '消除笔', Icon: Minus },
-];
-
-const CREATIVE_BOTTOM_MORE_ACTIONS = ['细节修复', '对口型'];
-
-function CreativeCanvas({ promptText, onToast }: { promptText: string; onToast?: (msg: string) => void }) {
+function CreativeCanvas({
+  canvaState,
+  onToast,
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  canvaState: CanvaState | null;
+  onToast?: (msg: string) => void;
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [favoriteIndexes, setFavoriteIndexes] = useState<number[]>([]);
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [showEnhanceEditor, setShowEnhanceEditor] = useState(false);
+  const [enhanceQuality, setEnhanceQuality] = useState<'8k' | '4k' | '2k'>('8k');
+  const state = canvaState ?? DEFAULT_CANVA_STATE;
+  const media = state.mode === 'video'
+    ? [canvasCase2]
+    : state.mode === 'edit'
+      ? [casePng, codingCase]
+      : CREATIVE_RESULT_IMAGES;
+  const currentImage = media[currentIndex % media.length];
+  const canNavigate = media.length > 1 && state.mode !== 'video';
+  const canvaMeta = getCanvaArtifactMeta(state);
 
-  const images = CREATIVE_RESULT_IMAGES;
-  const currentImage = images[currentIndex];
-  const isFavorited = favoriteIndexes.includes(currentIndex);
-  const imageUrl = typeof window === 'undefined'
-    ? currentImage
-    : new URL(currentImage, window.location.href).href;
-
-  const handlePrev = () => {
-    setCurrentIndex(prev => (prev === 0 ? images.length - 1 : prev - 1));
-  };
-
-  const handleNext = () => {
-    setCurrentIndex(prev => (prev === images.length - 1 ? 0 : prev + 1));
-  };
-
-  const handleAction = (action: string) => {
-    onToast?.(`${action} 功能已触发`);
-  };
-
-  const handleToggleFavorite = () => {
-    setFavoriteIndexes(prev => (
-      prev.includes(currentIndex)
-        ? prev.filter(idx => idx !== currentIndex)
-        : [...prev, currentIndex]
-    ));
-    onToast?.(isFavorited ? '已取消收藏' : '已收藏');
-  };
-
-  const handleShareImage = async () => {
+  const handleDownload = () => {
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title: `创意效果图 ${currentIndex + 1}`,
-          text: '来自 Octo Canvas',
-          url: imageUrl,
-        });
-        onToast?.('已打开系统分享');
-        return;
-      }
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(imageUrl);
-        onToast?.('图片链接已复制');
-        return;
-      }
-      onToast?.('当前浏览器不支持分享');
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      onToast?.('分享失败，请重试');
-    }
-  };
-
-  const handleDownloadImage = () => {
-    try {
-      const extMatch = imageUrl.match(/\.(png|jpe?g|webp|avif)(?:\?|#|$)/i);
-      const extRaw = (extMatch?.[1] ?? 'png').toLowerCase();
-      const ext = extRaw === 'jpeg' ? 'jpg' : extRaw;
       const link = document.createElement('a');
-      link.href = imageUrl;
-      link.download = `octo-canvas-${currentIndex + 1}.${ext}`;
-      link.rel = 'noopener';
+      link.href = currentImage;
+      link.download = `${canvaMeta.label}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -1927,191 +2486,382 @@ function CreativeCanvas({ promptText, onToast }: { promptText: string; onToast?:
     }
   };
 
-  const handleGenerateVideo = () => {
-    setIsGenerating(true);
-    setTimeout(() => {
-      setIsGenerating(false);
-      onToast?.('视频生成完成');
-    }, 2000);
+  const handleShare = () => {
+    onShare?.();
+  };
+
+  const handleEnhanceGenerate = () => {
+    onToast?.(`已应用${enhanceQuality.toUpperCase()}清晰增强`);
+    setShowEnhanceEditor(false);
+  };
+
+  const renderStage = () => {
+    if (!canvaState || canvaState.status === 'idle') {
+      return (
+        <div className="flex-1 rounded-[24px] border border-dashed border-[rgba(20,118,255,0.18)] bg-white flex flex-col items-center justify-center gap-3 text-center px-8">
+          <div className="w-14 h-14 rounded-[18px] bg-[#eff6ff] text-[#1476ff] flex items-center justify-center">
+            <Wand2 size={26} />
+          </div>
+          <div className="text-[18px] font-semibold text-[#191919]">Octo Canva 已就绪</div>
+          <p className="max-w-[440px] text-[13px] leading-[20px] text-[#666]">
+            在左侧继续选择图片生成、视频生成或 AI 修图。当前不会改变整体工作台布局，只会切换 Octo Canva 的业务操作项和结果页签内容。
+          </p>
+        </div>
+      );
+    }
+
+    if (canvaState.status === 'awaiting-upload') {
+      return (
+        <div className="flex-1 rounded-[24px] border border-dashed border-[rgba(25,25,25,0.12)] bg-white flex flex-col items-center justify-center gap-3 text-center px-8">
+          <div className="w-14 h-14 rounded-[18px] bg-[#fff7ed] text-[#d97706] flex items-center justify-center">
+            <Upload size={24} />
+          </div>
+          <div className="text-[18px] font-semibold text-[#191919]">{getCanvaEditToolLabel(canvaState.editTool)}待上传</div>
+          <p className="max-w-[420px] text-[13px] leading-[20px] text-[#666]">
+            左侧对话区已经切换到修图流程。请通过当前项目已有的上传入口添加图片，然后继续发送，我会在这里打开修图编辑结果。
+          </p>
+        </div>
+      );
+    }
+
+    if (canvaState.mode === 'video') {
+      return (
+        <div className="flex-1 rounded-[24px] bg-[#0b1020] overflow-hidden relative shadow-[0_12px_40px_rgba(0,0,0,0.16)]">
+          <img src={currentImage} alt="视频封面" className="w-full h-full object-cover opacity-90" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+          <div className="absolute left-6 right-6 bottom-6 flex items-end justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-white/12 backdrop-blur px-3 py-1 text-[11px] text-white border border-white/15">
+                <Play size={10} className="fill-current" />
+                创意视频结果
+              </div>
+              <p className="mt-3 text-[22px] font-semibold text-white">{extractTopic(canvaState.prompt || CREATIVE_DEFAULT_PROMPT)}</p>
+              <p className="mt-1 text-[12px] text-white/72">{canvaState.videoModel} · {canvaState.videoRatio} · {canvaState.videoDuration}</p>
+            </div>
+            <button
+              onClick={() => onToast?.('视频预览已就绪')}
+              className="w-14 h-14 rounded-full bg-white text-[#191919] shadow-[0_8px_24px_rgba(0,0,0,0.22)] flex items-center justify-center hover:scale-[1.02] transition-transform"
+            >
+              <Play size={18} className="fill-current ml-0.5" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (canvaState.mode === 'edit') {
+      return (
+        <div className="flex-1 grid grid-cols-2 gap-4">
+          <div className="rounded-[24px] bg-white border border-[rgba(25,25,25,0.08)] overflow-hidden">
+            <div className="h-11 border-b border-[rgba(25,25,25,0.08)] px-4 flex items-center text-[12px] text-[#666]">原图</div>
+            <div className="h-[calc(100%-44px)] flex items-center justify-center bg-[#fafafa]">
+              <img src={codingCase} alt="原图" className="max-w-full max-h-full object-contain" />
+            </div>
+          </div>
+          <div className="rounded-[24px] bg-white border border-[rgba(25,25,25,0.08)] overflow-hidden">
+            <div className="h-11 border-b border-[rgba(25,25,25,0.08)] px-4 flex items-center justify-between text-[12px] text-[#666]">
+              <span>处理结果</span>
+              <span className="text-[#1476ff]">{getCanvaEditToolLabel(canvaState.editTool)}</span>
+            </div>
+            <div className="h-[calc(100%-44px)] flex items-center justify-center bg-[#fafafa]">
+              <img src={casePng} alt="处理结果" className="max-w-full max-h-full object-contain" />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex-1 flex flex-col">
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <button
+            onClick={() => setCurrentIndex(prev => (prev === 0 ? media.length - 1 : prev - 1))}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#e5e7eb] transition-colors disabled:opacity-40"
+            disabled={!canNavigate}
+          >
+            <ChevronRight size={16} className="text-[#9ca3af] rotate-180" />
+          </button>
+          <span className="text-[12px] text-[#6b7280]">{currentIndex + 1} / {media.length}</span>
+          <button
+            onClick={() => setCurrentIndex(prev => (prev === media.length - 1 ? 0 : prev + 1))}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#e5e7eb] transition-colors disabled:opacity-40"
+            disabled={!canNavigate}
+          >
+            <ChevronRight size={16} className="text-[#9ca3af]" />
+          </button>
+        </div>
+        <div className="flex-1 rounded-[24px] bg-white border border-[rgba(25,25,25,0.08)] overflow-hidden relative flex items-center justify-center shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+          <img src={currentImage} alt={`创意图-${currentIndex + 1}`} className="max-w-full max-h-full object-contain" />
+        </div>
+      </div>
+    );
   };
 
   return (
     <div className="w-full h-full bg-[#fafafa] flex flex-col">
-      {/* 主体内容区 */}
       <div className="flex-1 flex overflow-hidden">
-        {/* 左侧图片展示区 */}
-        <div className="flex-1 flex flex-col p-6">
-          {/* 分页指示器（已移动到图片上方） */}
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <button
-              onClick={handlePrev}
-              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#e5e7eb] transition-colors"
-            >
-              <ChevronRight size={16} className="text-[#9ca3af] rotate-180" />
-            </button>
-            <span className="text-[12px] text-[#6b7280]">{currentIndex + 1} / {images.length}</span>
-            <button
-              onClick={handleNext}
-              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#e5e7eb] transition-colors"
-            >
-              <ChevronRight size={16} className="text-[#9ca3af]" />
-            </button>
-          </div>
-
-          <div className="flex-1 bg-transparent rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] overflow-hidden relative flex items-center justify-center">
-            {/* 图片 */}
-            <img
-              src={currentImage}
-              alt={`创意图-${currentIndex + 1}`}
-              className="max-w-full max-h-full object-contain"
-            />
-
-            {/* 左右切换箭头 */}
-            <button
-              onClick={handlePrev}
-              className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-white/90 hover:bg-white rounded-full shadow-lg transition-colors"
-            >
-              <ChevronRight size={20} className="text-[#374151] rotate-180" />
-            </button>
-            <button
-              onClick={handleNext}
-              className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center bg-white/90 hover:bg-white rounded-full shadow-lg transition-colors"
-            >
-              <ChevronRight size={20} className="text-[#374151]" />
-            </button>
-          </div>
-
-          {/* 图片操作栏 */}
-          <div className="mt-4 flex items-center justify-center">
-            <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white border border-[rgba(0,0,0,0.08)] shadow-[0_6px_14px_rgba(0,0,0,0.08)]">
-              <button
-                onClick={handleToggleFavorite}
-                className={`w-[26px] h-[26px] rounded-full flex items-center justify-center transition-colors ${isFavorited ? 'text-[#ef4444] bg-[#fff1f2]' : 'text-[#1f2937] hover:bg-[#f3f4f6]'}`}
-                title={isFavorited ? '取消收藏' : '收藏'}
-              >
-                <Heart size={16} className={isFavorited ? 'fill-current' : ''} />
-              </button>
-              <button
-                onClick={() => { void handleShareImage(); }}
-                className="w-[26px] h-[26px] rounded-full flex items-center justify-center text-[#1f2937] hover:bg-[#f3f4f6] transition-colors"
-                title="分享"
-              >
-                <Share2 size={16} />
-              </button>
-              <button
-                onClick={handleDownloadImage}
-                className="w-[56px] h-[26px] rounded-full bg-[#155dfc] hover:bg-[#0f4bd8] text-white text-[12px] font-medium transition-colors flex items-center justify-center"
-                title="下载"
-              >
-                <span style={{ fontFamily: 'PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif' }}>
+        <div className="flex-1 flex flex-col p-6 gap-4">
+          {renderStage()}
+          {canvaState?.status === 'ready' && (
+            <div className="flex items-center justify-center">
+              <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white border border-[rgba(0,0,0,0.08)] shadow-[0_6px_14px_rgba(0,0,0,0.08)]">
+                <button
+                  onClick={() => {
+                    setIsFavorited(prev => !prev);
+                    onToast?.(isFavorited ? '已取消收藏' : '已收藏');
+                  }}
+                  className={`w-[26px] h-[26px] rounded-full flex items-center justify-center transition-colors ${isFavorited ? 'text-[#ef4444] bg-[#fff1f2]' : 'text-[#1f2937] hover:bg-[#f3f4f6]'}`}
+                >
+                  <Heart size={16} className={isFavorited ? 'fill-current' : ''} />
+                </button>
+                <button onClick={() => { void handleShare(); }} className="w-[26px] h-[26px] rounded-full flex items-center justify-center text-[#1f2937] hover:bg-[#f3f4f6] transition-colors">
+                  <Share2 size={16} />
+                </button>
+                <button
+                  onClick={() => onSaveToProjectAssets?.()}
+                  title="保存至项目资产"
+                  className="w-[26px] h-[26px] rounded-full flex items-center justify-center text-[#1f2937] hover:bg-[#f3f4f6] transition-colors"
+                >
+                  <FolderOpen size={16} />
+                </button>
+                <button onClick={handleDownload} className="w-[56px] h-[26px] rounded-full bg-[#155dfc] hover:bg-[#0f4bd8] text-white text-[12px] font-medium transition-colors flex items-center justify-center">
                   下载
-                </span>
-              </button>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* 右侧编辑面板 */}
-        <div className="w-[360px] bg-white border-l border-[#e5e7eb] overflow-y-auto">
-          {/* 图片提示词 */}
-          <div className="p-4 border-b border-[#e5e7eb]">
-            <div className="text-[12px] text-[#9ca3af] mb-2">图片提示词</div>
-            <div className="text-[12px] text-[#374151] leading-relaxed">
-              {promptText || CREATIVE_DEFAULT_PROMPT}
-            </div>
-            <div className="flex items-center gap-2 mt-3 text-[12px] text-[#9ca3af]">
-              <span>图片5.0精简版</span>
-              <span>·</span>
-              <span>智能比例</span>
-              <span>·</span>
-              <span>2K</span>
-              <button className="text-[#155dfc] hover:underline ml-auto">详细信息 &gt;</button>
-            </div>
-          </div>
+        <div className="w-[360px] bg-white border-l border-[#e5e7eb] overflow-y-auto py-5 px-4 flex flex-col gap-5">
 
-          {/* 生成区域 */}
-          <div className="p-4 border-b border-[#e5e7eb]">
-            <div className="text-[12px] text-[#9ca3af] mb-3">生成</div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleGenerateVideo}
-                disabled={isGenerating}
-                className="flex-1 flex items-center justify-center gap-2 h-10 bg-[#f5f5f7] hover:bg-[#e5e7eb] rounded-xl text-[12px] text-[#374151] transition-colors disabled:opacity-60"
-              >
-                {isGenerating ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Play size={14} className="fill-current" />
-                )}
-                {isGenerating ? '生成中...' : '生成视频'}
-              </button>
-              <button
-                onClick={() => handleAction('去开源编辑')}
-                className="flex-1 flex items-center justify-center gap-2 h-10 bg-[#f5f5f7] hover:bg-[#e5e7eb] rounded-xl text-[12px] text-[#374151] transition-colors"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <line x1="9" y1="3" x2="9" y2="21" />
-                </svg>
-                去开源编辑
-              </button>
-            </div>
-          </div>
-
-          {/* 编辑区域 */}
-          <div className="p-4 border-b border-[#e5e7eb]">
-            <div className="text-[12px] text-[#9ca3af] mb-3">编辑</div>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { label: '智能超清', badge: '新的' },
-                { label: '超清', badge: null },
-                { label: '细节修复', badge: null },
-                { label: '局部重绘', badge: null },
-                { label: '扩图', badge: null },
-                { label: '删除笔', badge: null },
-                { label: '对口型', badge: null },
-              ].map(item => (
+          {/* 生成结果 */}
+          <div>
+            <p className="text-[12px] font-semibold text-[#191919] mb-3">生成结果</p>
+            <div className={`grid gap-1.5 mb-3`} style={{ gridTemplateColumns: `repeat(${media.length}, 1fr)` }}>
+              {media.map((src, i) => (
                 <button
-                  key={item.label}
-                  onClick={() => handleAction(item.label)}
-                  className="relative h-10 flex items-center justify-center bg-[#f5f5f7] hover:bg-[#e5e7eb] rounded-xl text-[12px] text-[#374151] transition-colors"
+                  key={i}
+                  onClick={() => setCurrentIndex(i)}
+                  className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${currentIndex === i ? 'border-[#155dfc]' : 'border-transparent hover:border-[#bfdbfe]'}`}
                 >
-                  {item.label}
-                  {item.badge && (
-                    <span className="absolute top-1 right-2 text-[10px] text-[#155dfc] font-medium">
-                      {item.badge}
-                    </span>
-                  )}
+                  <img src={src} alt={`方案${String.fromCharCode(65 + i)}`} className="w-full h-full object-cover" />
                 </button>
+              ))}
+            </div>
+            {(() => {
+              const VARIANT_TITLES = ['城市公园夜跑', '河边步道晨跑', '社区健身', '滨江跑道'];
+              const VARIANT_DESCS = ['城市公园夜间跑步场景，路灯照明，跑道清晰，运动者剪影', '清晨河边步道，阳光透过树叶，清新自然', '社区户外健身区，活力社区，居民锻炼', '滨江景观跑道，江景优美，沉浸自然'];
+              const idx = Math.min(currentIndex, media.length - 1);
+              return (
+                <>
+                  <p className="text-[13px] font-bold text-[#191919] mb-1.5">
+                    方案{String.fromCharCode(65 + idx)}：{VARIANT_TITLES[idx] ?? VARIANT_TITLES[0]}
+                  </p>
+                  <p className="text-[11px] text-[#666] leading-relaxed">
+                    {VARIANT_DESCS[idx] ?? VARIANT_DESCS[0]}
+                  </p>
+                </>
+              );
+            })()}
+          </div>
+
+          {/* 生成信息 */}
+          <div>
+            <p className="text-[12px] font-semibold text-[#191919] mb-2.5">生成信息</p>
+            <div className="space-y-2">
+              {([
+                ['模型', state.imageModel || '图片5.0 Lite'],
+                ['比例', state.imageRatio || '16:9'],
+                ['分辨率', '1920x1080'],
+                ['时间', '2026-04-01 16:45'],
+              ] as [string, string][]).map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between">
+                  <span className="text-[11px] text-[#9ca3af]">{label}</span>
+                  <span className="text-[11px] text-[#374151] font-medium">{value}</span>
+                </div>
               ))}
             </div>
           </div>
 
-          {/* 更多区域 */}
-          <div className="p-4">
-            <div className="text-[12px] text-[#9ca3af] mb-3">更多</div>
+          {/* 提示词 */}
+          <div>
+            <p className="text-[12px] font-semibold text-[#191919] mb-1.5">提示词</p>
+            <p className="text-[11px] text-[#666] leading-relaxed">
+              {state.prompt || CREATIVE_DEFAULT_PROMPT}
+            </p>
+          </div>
+
+          {/* 操作 */}
+          <div className="space-y-2">
+            <button
+              onClick={() => onToast?.('正在重新生成...')}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-[12px] font-medium transition-colors hover:opacity-90 active:scale-[0.98]"
+              style={{ background: 'linear-gradient(135deg, #155dfc 0%, #4f46e5 100%)' }}
+            >
+              <Sparkles size={14} />
+              再次生成
+            </button>
             <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleAction('重新编辑')}
-                className="flex items-center justify-center gap-2 h-10 bg-[#f5f5f7] hover:bg-[#e5e7eb] rounded-xl text-[12px] text-[#374151] transition-colors"
-              >
-                <RotateCcw size={14} />
-                重新编辑
-              </button>
-              <button
-                onClick={() => handleAction('再次生成')}
-                className="flex items-center justify-center gap-2 h-10 bg-[#f5f5f7] hover:bg-[#e5e7eb] rounded-xl text-[12px] text-[#374151] transition-colors"
-              >
-                <RefreshCw size={14} />
-                再次生成
-              </button>
+              {([
+                { icon: Wand2, label: '变清晰' },
+                { icon: Scissors, label: '抠图' },
+                { icon: Paintbrush, label: '局部重绘' },
+                { icon: Expand, label: '扩图' },
+              ] as { icon: React.FC<{ size?: number; className?: string }>; label: string }[]).map(({ icon: Icon, label }) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    if (label === '变清晰') {
+                      setShowEnhanceEditor(true);
+                      return;
+                    }
+                    onToast?.(`${label}功能即将上线`);
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[#374151] text-[12px] border border-[rgba(25,25,25,0.1)] bg-[#f7f8fa] hover:bg-[#eceef2] transition-colors active:scale-[0.98]"
+                >
+                  <Icon size={13} className="text-[#6b7280]" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => onToast?.('在线编辑功能即将上线')}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[#374151] text-[12px] border border-[rgba(25,25,25,0.1)] bg-[#f7f8fa] hover:bg-[#eceef2] transition-colors active:scale-[0.98]"
+            >
+              <Pencil size={13} className="text-[#6b7280]" />
+              在线编辑
+            </button>
+          </div>
+
+          {/* 风格标签 */}
+          <div>
+            <p className="text-[12px] font-semibold text-[#191919] mb-2">风格标签</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(['运动', '氛围图', '摄影风格'] as string[]).map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[11px] px-2.5 py-1 rounded-full border cursor-default select-none border-[#155dfc] text-[#155dfc] bg-[#eff6ff]"
+                >
+                  {tag}
+                </span>
+              ))}
             </div>
           </div>
+
+          {/* 相关作品 */}
+          <div>
+            <p className="text-[12px] font-semibold text-[#191919] mb-2">相关作品</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([imgA3, imgA4] as string[]).map((src, i) => (
+                <div key={i} className="aspect-[4/3] rounded-xl overflow-hidden">
+                  <img src={src} alt="" className="w-full h-full object-cover" />
+                </div>
+              ))}
+            </div>
+          </div>
+
         </div>
       </div>
+
+      <AnimatePresence>
+        {showEnhanceEditor && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.16 }}
+            className="fixed inset-0 z-[220] bg-black"
+          >
+            <div className="h-full w-full flex flex-col">
+              <div className="h-[66px] shrink-0 border-b border-white/10 bg-[#171933] text-white px-5 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-9 px-3 rounded-[10px] bg-[#252a55] inline-flex items-center gap-2 text-[16px] font-semibold">
+                    <Wand2 size={16} />
+                    变清晰
+                  </div>
+                  <span className="text-[12px] text-white/70">画质提升 · 基于原图快速超分放大</span>
+                </div>
+                <div className="flex items-center gap-5 text-white/70">
+                  <button className="hover:text-white transition-colors" onClick={() => onToast?.('撤销')}>
+                    <RotateCcw size={16} />
+                  </button>
+                  <button className="hover:text-white transition-colors" onClick={() => onToast?.('重做')}>
+                    <RotateCcw size={16} className="scale-x-[-1]" />
+                  </button>
+                  <button className="hover:text-white transition-colors" onClick={() => onToast?.('移动')}>
+                    <Hand size={16} />
+                  </button>
+                  <button className="hover:text-white transition-colors" onClick={() => onToast?.('笔刷')}>
+                    <Paintbrush size={16} />
+                  </button>
+                  <button className="hover:text-white transition-colors" onClick={() => onToast?.('橡皮擦')}>
+                    <Scissors size={16} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-white/80 text-[14px]">100%</div>
+                  <button
+                    onClick={() => setShowEnhanceEditor(false)}
+                    className="w-8 h-8 rounded-md hover:bg-white/10 text-white/80 hover:text-white inline-flex items-center justify-center"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+                <div className="w-[calc(100%-420px)] h-[calc(100%-220px)] min-w-[640px] min-h-[360px] rounded-[14px] overflow-hidden border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+                  <img src={currentImage} alt="清晰增强预览" className="w-full h-full object-cover" />
+                </div>
+              </div>
+
+              <div className="h-[96px] shrink-0 border-t border-white/10 bg-[#141626] px-6 flex items-center justify-between">
+                <div className="flex items-center gap-5">
+                  <span className="text-white/75 text-[14px]">放大模式</span>
+                  <div className="flex items-center gap-4">
+                    {[
+                      { key: '8k', label: '8k超清' },
+                      { key: '4k', label: '4k清晰' },
+                      { key: '2k', label: '2k性能' },
+                    ].map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setEnhanceQuality(option.key as '8k' | '4k' | '2k')}
+                        className="inline-flex items-center gap-2 text-[15px] text-white/80 hover:text-white transition-colors"
+                      >
+                        <span className={`w-4 h-4 rounded-full border inline-flex items-center justify-center ${
+                          enhanceQuality === option.key ? 'border-[#7c5cff]' : 'border-white/35'
+                        }`}>
+                          {enhanceQuality === option.key && <span className="w-2.5 h-2.5 rounded-full bg-[#7c5cff]" />}
+                        </span>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowEnhanceEditor(false)}
+                    className="h-11 px-8 rounded-[14px] border border-white/20 text-white/85 text-[20px] hover:bg-white/10 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleEnhanceGenerate}
+                    className="h-11 px-8 rounded-[14px] text-white text-[20px] font-medium transition-transform active:scale-[0.98]"
+                    style={{ background: 'linear-gradient(135deg, #3d5dff 0%, #8b5cf6 100%)' }}
+                  >
+                    一键生成
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
-
 }
 function CanvasSkeleton({ workflow }: { workflow: WorkflowType }) {
   const labels: Record<WorkflowType, string> = {
@@ -2120,6 +2870,11 @@ function CanvasSkeleton({ workflow }: { workflow: WorkflowType }) {
     'creative': '正在生成创意效果图…',
     'research': '正在生成竞品分析报告…',
     'interview': '正在生成用研报告…',
+    'insight-viewpoint': '正在生成观点解析表…',
+    'insight-outline': '正在按提纲聚类…',
+    'insight-persona': '正在生成用户画像…',
+    'insight-mindmap': '正在生成思维导图…',
+    'insight-eval-question': '正在整理评估问题…',
   };
   return (
     <div className="absolute inset-0 z-10">
@@ -2319,7 +3074,15 @@ function getReportBadgeClass(value: string) {
   return 'bg-[#fed7d7] text-[#c53030]';
 }
 
-function CompetitiveAnalysisCanvas({ onToast }: { onToast?: (msg: string) => void }) {
+function CompetitiveAnalysisCanvas({
+  onToast,
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onToast?: (msg: string) => void;
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
   const [activeSection, setActiveSection] = useState<ReportSectionId>('summary');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<ReportSectionId, HTMLElement | null>>({
@@ -2369,6 +3132,20 @@ function CompetitiveAnalysisCanvas({ onToast }: { onToast?: (msg: string) => voi
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         <div className="sticky top-0 z-20 h-[44px] px-[11px] pt-[12px]">
           <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => onSaveToProjectAssets?.()}
+              className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+            >
+              <FolderOpen size={12} />
+              保存至项目资产
+            </button>
+            <button
+              onClick={() => onShare?.()}
+              className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+            >
+              <Share2 size={12} />
+              分享
+            </button>
             <button
               onClick={() => onToast?.('编辑报告功能已触发')}
               className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors"
@@ -2625,7 +3402,13 @@ const SUGGESTIONS = [
   '计划完成度激励：完成率 > 80% 时给予成就解锁，正向强化打卡习惯',
 ];
 
-function InterviewCanvas() {
+function InterviewCanvas({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<ResearchTab>('questions');
 
   const tabs: { id: ResearchTab; label: string; icon: string }[] = [
@@ -2670,6 +3453,24 @@ function InterviewCanvas() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-20 h-[44px] px-[11px] pt-[12px] bg-white/95 backdrop-blur-[6px]">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={() => onSaveToProjectAssets?.()}
+              className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+            >
+              <FolderOpen size={12} />
+              保存至项目资产
+            </button>
+            <button
+              onClick={() => onShare?.()}
+              className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+            >
+              <Share2 size={12} />
+              分享
+            </button>
+          </div>
+        </div>
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -2822,19 +3623,517 @@ function InterviewCanvas() {
   );
 }
 
+// ─── InsightTableView ─────────────────────────────────────────────────────────
+function InsightTableView({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
+  const rows = [
+    { question: '算子开发环境搭建的整体体验如何？', viewpoint: '工具链分散，环境配置耗时长', scene: '环境初始化', quote: '装完驱动再装Toolkit，版本还得一一对应，折腾了一整天' },
+    { question: '调试算子时遇到最大的挑战是什么？', viewpoint: '定位精度问题困难，日志信息不足', scene: '精度调试', quote: '输出结果不对，但不知道是哪一层算子出了偏差' },
+    { question: '对算子市场/复用机制的看法？', viewpoint: '现有算子覆盖不全，自定义门槛高', scene: '算子选型', quote: '官方库里有80%的算子，剩下20%得自己写，文档又少' },
+    { question: '学习算子开发的主要障碍？', viewpoint: '学习曲线陡峭，示例代码不足', scene: '新手入门', quote: '看了一遍官方文档，还是不知道怎么把PyTorch算子迁移过来' },
+    { question: '性能优化方面有哪些经验？', viewpoint: '内存排布和流水并行是关键', scene: '性能调优', quote: '改了数据格式之后吞吐量直接翻倍，但这个过程靠猜的成分很大' },
+    { question: '多硬件后端适配的体验如何？', viewpoint: '不同后端API差异大，移植成本高', scene: '跨平台迁移', quote: '在昇腾上跑通的算子，放到寒武纪上几乎要重写一遍' },
+    { question: '对可视化编排工具的期望？', viewpoint: '希望拖拽式生成算子图，降低编码量', scene: '低代码编排', quote: '如果能像搭积木一样把算子连起来，我就不想手写那么多C++了' },
+    { question: '与现有深度学习框架集成是否顺畅？', viewpoint: '接口转换繁琐，图融合策略不透明', scene: '框架对接', quote: '从PyTorch转ONNX再转自定义格式，中间哪一步出了问题根本看不出来' },
+  ];
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-white">
+      <div className="shrink-0 h-[52px] px-5 flex items-center justify-between border-b border-[rgba(0,0,0,0.06)]">
+        <h3 className="text-[14px] font-semibold text-[#191919]">访谈观点解析表</h3>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Download size={12} /> 下载
+          </button>
+          <button onClick={() => onSaveToProjectAssets?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <FolderOpen size={12} /> 保存至项目资产
+          </button>
+          <button onClick={() => onShare?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Share2 size={12} /> 分享
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-5">
+        <div className="rounded-[16px] border border-[#ede9fe] bg-white overflow-hidden">
+          <table className="w-full text-[12px] min-w-[600px]">
+            <thead>
+              <tr className="bg-[#f5f3ff] text-[#6d28d9]">
+                <th className="text-left px-4 py-3 font-semibold">访谈问题</th>
+                <th className="text-left px-4 py-3 font-semibold">用户观点</th>
+                <th className="text-left px-4 py-3 font-semibold">场景主体</th>
+                <th className="text-left px-4 py-3 font-semibold">用户原声</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className="border-t border-[#f3f4f6] hover:bg-[#faf5ff] transition-colors">
+                  <td className="px-4 py-3 text-[#191919] leading-relaxed">{row.question}</td>
+                  <td className="px-4 py-3 text-[#374151] leading-relaxed">{row.viewpoint}</td>
+                  <td className="px-4 py-3">
+                    <span className="inline-block bg-[#f0f5ff] text-[#1476ff] rounded-full px-2.5 py-0.5 text-[11px]">{row.scene}</span>
+                  </td>
+                  <td className="px-4 py-3 italic text-[#6b7280] leading-relaxed">&ldquo;{row.quote}&rdquo;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── InsightOutlineMindMap ────────────────────────────────────────────────────
+function InsightOutlineMindMap({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
+  const branches = [
+    {
+      title: '开发动机',
+      children: ['性能优化', '算子复用', '自主创新'],
+    },
+    {
+      title: '开发习惯',
+      children: ['C++手写', 'Python原型', '调试验证'],
+    },
+    {
+      title: '痛点障碍',
+      children: ['精度对齐', '环境配置', '文档缺失'],
+    },
+    {
+      title: '需求期望',
+      children: ['可视化编排', '自动调优', '算子市场'],
+    },
+  ];
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
+  const branchRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [paths, setPaths] = useState<string[]>([]);
+
+  const computePaths = useCallback(() => {
+    const container = containerRef.current;
+    const center = centerRef.current;
+    if (!container || !center) return;
+
+    const cRect = container.getBoundingClientRect();
+    const centerRect = center.getBoundingClientRect();
+    const sx = centerRect.right - cRect.left;
+    const sy = centerRect.top + centerRect.height / 2 - cRect.top;
+
+    const newPaths: string[] = [];
+    branchRefs.current.forEach((el) => {
+      if (!el) return;
+      const bRect = el.getBoundingClientRect();
+      const ex = bRect.left - cRect.left;
+      const ey = bRect.top + bRect.height / 2 - cRect.top;
+      const cpx = sx + (ex - sx) * 0.5;
+      newPaths.push(`M ${sx} ${sy} C ${cpx} ${sy}, ${cpx} ${ey}, ${ex} ${ey}`);
+    });
+    setPaths(newPaths);
+  }, []);
+
+  useEffect(() => {
+    computePaths();
+    window.addEventListener('resize', computePaths);
+    return () => window.removeEventListener('resize', computePaths);
+  }, [computePaths]);
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-white">
+      <div className="shrink-0 h-[52px] px-5 flex items-center justify-between border-b border-[rgba(0,0,0,0.06)]">
+        <h3 className="text-[14px] font-semibold text-[#191919]">按提纲聚类思维导图</h3>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Download size={12} /> 下载
+          </button>
+          <button onClick={() => onSaveToProjectAssets?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <FolderOpen size={12} /> 保存至项目资产
+          </button>
+          <button onClick={() => onShare?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Share2 size={12} /> 分享
+          </button>
+        </div>
+      </div>
+      <div ref={containerRef} className="flex-1 relative flex items-center justify-center overflow-auto px-8 py-8">
+        {/* SVG 连线层 */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          {paths.map((d, i) => (
+            <path key={i} d={d} stroke="#8b5cf6" strokeWidth={2} fill="none" />
+          ))}
+        </svg>
+
+        <div className="flex items-center gap-16">
+          {/* 左侧中心节点 */}
+          <div className="shrink-0 w-[140px] flex justify-center">
+            <div ref={centerRef} className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-[#6d28d9] to-[#8b5cf6] text-white text-[13px] font-semibold shadow-[0_4px_16px_rgba(109,40,217,0.2)]">
+              访谈核心主题
+            </div>
+          </div>
+
+          {/* 右侧分支节点 */}
+          <div className="shrink-0 w-[200px] flex flex-col justify-center gap-8">
+            {branches.map((branch, i) => (
+              <div key={i} ref={(el) => { branchRefs.current[i] = el; }}>
+                <div className="px-4 py-2 rounded-lg bg-white border border-[#ede9fe] shadow-[0_2px_8px_rgba(109,40,217,0.06)] inline-block">
+                  <p className="text-[12px] font-semibold text-[#6d28d9]">{branch.title}</p>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {branch.children.map((child, j) => (
+                    <span key={j} className="inline-block bg-[#f0f5ff] text-[#1476ff] rounded-full px-2 py-0.5 text-[11px]">
+                      {child}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── InsightPersonaCard ───────────────────────────────────────────────────────
+function InsightPersonaCard({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
+  const personas = [
+    {
+      name: '小张', age: 26, job: '算法工程师',
+      tags: ['性能导向', '追求极致'],
+      goals: ['推理性能提升 30%', '掌握底层算子优化'],
+      painPoints: ['Profiler 工具不好用', '性能瓶颈定位困难'],
+      quote: '我想知道每一毫秒花在了哪个核函数上',
+    },
+    {
+      name: '阿明', age: 30, job: '框架开发',
+      tags: ['工程规范', '重视复用'],
+      goals: ['构建内部算子库', '统一多后端接口'],
+      painPoints: ['算子版本管理混乱', '重复造轮子严重'],
+      quote: '同样的逻辑昇腾和 CUDA 写了两遍，维护成本太高了',
+    },
+    {
+      name: '老陈', age: 42, job: '资深架构师',
+      tags: ['系统思维', '关注全链路'],
+      goals: ['端到端编译优化', '降低算子接入门槛'],
+      painPoints: ['新人上手周期太长', '算子质量参差不齐'],
+      quote: '我们要的不是写算子的人有多厉害，而是普通人也能写出高性能算子',
+    },
+  ];
+
+  const [activeIndex, setActiveIndex] = useState(0);
+  const active = personas[activeIndex];
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-white">
+      <div className="shrink-0 h-[52px] px-5 flex items-center justify-between border-b border-[rgba(0,0,0,0.06)]">
+        <h3 className="text-[14px] font-semibold text-[#191919]">AI 用户画像</h3>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Download size={12} /> 下载
+          </button>
+          <button onClick={() => onSaveToProjectAssets?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <FolderOpen size={12} /> 保存至项目资产
+          </button>
+          <button onClick={() => onShare?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Share2 size={12} /> 分享
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-6">
+        {/* Tabs */}
+        <div className="flex items-center gap-3 mb-6">
+          {personas.map((p, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveIndex(i)}
+              className={`relative px-4 py-2 rounded-xl text-[13px] font-medium transition-all ${
+                i === activeIndex
+                  ? 'bg-[#f5f3ff] text-[#6d28d9] shadow-[0_2px_8px_rgba(109,40,217,0.1)]'
+                  : 'bg-[#fafafa] text-[#666] hover:bg-[#f3f3f3]'
+              }`}
+            >
+              {p.name} · {p.job}
+            </button>
+          ))}
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeIndex}
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -12 }}
+            transition={{ duration: 0.2 }}
+            className="max-w-[560px] mx-auto rounded-[16px] border border-[#ede9fe] bg-white p-6 shadow-[0_4px_16px_rgba(109,40,217,0.08)]"
+          >
+            <div className="flex items-center gap-4 mb-5">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#6d28d9] to-[#8b5cf6] flex items-center justify-center text-white text-[18px] font-bold">
+                {active.name[0]}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[16px] font-semibold text-[#191919]">{active.name}</span>
+                  <span className="text-[12px] text-[#6b7280]">{active.age}岁 · {active.job}</span>
+                </div>
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {active.tags.map((t, i) => (
+                    <span key={i} className="bg-[#f0f5ff] text-[#1476ff] rounded-full px-2 py-0.5 text-[11px]">{t}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-5">
+              <div>
+                <h4 className="text-[12px] font-semibold text-[#6d28d9] mb-2 flex items-center gap-1">
+                  <span>🎯</span> 核心目标
+                </h4>
+                <ul className="space-y-1.5">
+                  {active.goals.map((g, i) => (
+                    <li key={i} className="text-[12px] text-[#374151] flex items-start gap-2">
+                      <span className="w-1 h-1 rounded-full bg-[#6d28d9] mt-1.5 shrink-0" />
+                      {g}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h4 className="text-[12px] font-semibold text-[#ef4444] mb-2 flex items-center gap-1">
+                  <span>😤</span> 主要痛点
+                </h4>
+                <ul className="space-y-1.5">
+                  {active.painPoints.map((p, i) => (
+                    <li key={i} className="text-[12px] text-[#374151] flex items-start gap-2">
+                      <span className="w-1 h-1 rounded-full bg-[#ef4444] mt-1.5 shrink-0" />
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="border-l-2 border-[#6d28d9] pl-3 py-1 bg-[#faf5ff] rounded-r-lg">
+                <h4 className="text-[12px] font-semibold text-[#6d28d9] mb-1">💬 用户语录</h4>
+                <p className="text-[12px] text-[#4b5563] italic">&ldquo;{active.quote}&rdquo;</p>
+              </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+// ─── InsightLogicMindMap ──────────────────────────────────────────────────────
+function InsightLogicMindMap({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
+  const branches = [
+    {
+      title: '核心发现',
+      children: ['算子开发以 C++手写为主，Python 原型为辅', '精度调试是耗时最长的环节', '算子复用率不足 30%，重复开发严重', '跨硬件后端移植成本极高'],
+    },
+    {
+      title: '用户期望',
+      children: ['可视化拖拽式算子编排', '自动性能分析与调优建议', '跨平台一键编译与部署', '完善的算子市场与评分体系', 'AI 辅助算子生成与验证'],
+    },
+    {
+      title: '关键结论',
+      children: ['降低开发门槛比功能丰富更重要', '文档质量与示例代码直接影响工具采纳率', '"够用就好"是多数团队的务实选择', '可视化调试可显著缩短定位时间'],
+    },
+  ];
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const centerRef = useRef<HTMLDivElement>(null);
+  const branchRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [paths, setPaths] = useState<string[]>([]);
+
+  const computePaths = useCallback(() => {
+    const container = containerRef.current;
+    const center = centerRef.current;
+    if (!container || !center) return;
+
+    const cRect = container.getBoundingClientRect();
+    const centerRect = center.getBoundingClientRect();
+    const sx = centerRect.right - cRect.left;
+    const sy = centerRect.top + centerRect.height / 2 - cRect.top;
+
+    const newPaths: string[] = [];
+    branchRefs.current.forEach((el) => {
+      if (!el) return;
+      const bRect = el.getBoundingClientRect();
+      const ex = bRect.left - cRect.left;
+      const ey = bRect.top + bRect.height / 2 - cRect.top;
+      const cpx = sx + (ex - sx) * 0.5;
+      newPaths.push(`M ${sx} ${sy} C ${cpx} ${sy}, ${cpx} ${ey}, ${ex} ${ey}`);
+    });
+    setPaths(newPaths);
+  }, []);
+
+  useEffect(() => {
+    computePaths();
+    window.addEventListener('resize', computePaths);
+    return () => window.removeEventListener('resize', computePaths);
+  }, [computePaths]);
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-white">
+      <div className="shrink-0 h-[52px] px-5 flex items-center justify-between border-b border-[rgba(0,0,0,0.06)]">
+        <h3 className="text-[14px] font-semibold text-[#191919]">思维导图</h3>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Download size={12} /> 下载
+          </button>
+          <button onClick={() => onSaveToProjectAssets?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <FolderOpen size={12} /> 保存至项目资产
+          </button>
+          <button onClick={() => onShare?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Share2 size={12} /> 分享
+          </button>
+        </div>
+      </div>
+      <div ref={containerRef} className="flex-1 relative flex items-center justify-center overflow-auto px-8 py-8">
+        {/* SVG 连线层 */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          {paths.map((d, i) => (
+            <path key={i} d={d} stroke="#8b5cf6" strokeWidth={2} fill="none" />
+          ))}
+        </svg>
+
+        <div className="flex items-center gap-16">
+          {/* 左侧中心节点 */}
+          <div className="shrink-0 w-[160px] flex justify-center">
+            <div ref={centerRef} className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-[#6d28d9] to-[#8b5cf6] text-white text-[13px] font-semibold shadow-[0_4px_16px_rgba(109,40,217,0.2)]">
+              跑步 App 用研洞察
+            </div>
+          </div>
+
+          {/* 右侧分支节点 */}
+          <div className="shrink-0 w-[260px] flex flex-col justify-center gap-6">
+            {branches.map((branch, i) => (
+              <div key={i} ref={(el) => { branchRefs.current[i] = el; }}>
+                <div className="px-4 py-2 rounded-lg bg-white border border-[#ede9fe] shadow-[0_2px_8px_rgba(109,40,217,0.06)] inline-block">
+                  <p className="text-[12px] font-semibold text-[#6d28d9]">{branch.title}</p>
+                </div>
+                <div className="flex flex-col gap-1 mt-2 pl-2">
+                  {branch.children.map((child, j) => (
+                    <span key={j} className="text-[11px] text-[#4b5563] leading-relaxed">
+                      {child}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── InsightEvalQuestionTable ─────────────────────────────────────────────────
+function InsightEvalQuestionTable({
+  onSaveToProjectAssets,
+  onShare,
+}: {
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+}) {
+  const rows = [
+    { task: '注册登录任务', issue: '用户未注意到隐私协议，直接点了跳过', quote: '这里要我同意什么？' },
+    { task: '注册登录任务', issue: '验证码收不到时无重发引导，用户流失', quote: '短信怎么还没来？' },
+    { task: '配置训练计划', issue: '步骤过多，完成率低于 30%', quote: '我以为设置好了，原来没有' },
+    { task: '配置训练计划', issue: '目标配速输入无参考范围，用户困惑', quote: '我该填多少合适？' },
+    { task: '开始首次跑步', issue: 'GPS 定位提示不明确，用户 indoor 误操作', quote: '我在室内怎么也在记距离？' },
+    { task: '查看运动数据', issue: '图表维度切换隐蔽，用户找不到心率曲线', quote: '心率图在哪里看？' },
+    { task: '分享运动成就', issue: '分享卡片样式单一，缺乏个性化', quote: '分享出去看起来太普通了' },
+    { task: '加入跑团活动', issue: '活动规则说明过长，用户未读完就退出', quote: '规则太长了，懒得看' },
+  ];
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-white">
+      <div className="shrink-0 h-[52px] px-5 flex items-center justify-between border-b border-[rgba(0,0,0,0.06)]">
+        <h3 className="text-[14px] font-semibold text-[#191919]">评估问题整理</h3>
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Download size={12} /> 下载
+          </button>
+          <button onClick={() => onSaveToProjectAssets?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <FolderOpen size={12} /> 保存至项目资产
+          </button>
+          <button onClick={() => onShare?.()} className="flex items-center gap-1 h-8 px-3 rounded-[6px] text-[12px] text-[#555] hover:text-[#191919] hover:bg-[#f5f5f5] transition-colors">
+            <Share2 size={12} /> 分享
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto p-5">
+        <div className="rounded-[16px] border border-[#ede9fe] bg-white overflow-hidden">
+          <table className="w-full text-[12px] min-w-[600px]">
+            <thead>
+              <tr className="bg-[#f5f3ff] text-[#6d28d9]">
+                <th className="text-left px-4 py-3 font-semibold">任务名称</th>
+                <th className="text-left px-4 py-3 font-semibold">用户可用性问题/需求</th>
+                <th className="text-left px-4 py-3 font-semibold">用户原声</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className="border-t border-[#f3f4f6] hover:bg-[#faf5ff] transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="inline-block bg-[#f0f5ff] text-[#1476ff] rounded-lg px-2.5 py-1 text-[11px]">📋 {row.task}</span>
+                  </td>
+                  <td className="px-4 py-3 text-[#374151] leading-relaxed">{row.issue}</td>
+                  <td className="px-4 py-3 italic text-[#6b7280] leading-relaxed">&ldquo;{row.quote}&rdquo;</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PreviewStage ─────────────────────────────────────────────────────────────
 function PreviewStage({
   workflow,
+  canvaState,
   onToast,
   toolbarLeftPadding,
   generatedHtml,
   onCopyAsDesign,
+  onSaveToProjectAssets,
+  onShare,
+  linkedPrototypeComponents,
+  selectedPrototypeComponentIds,
+  onTogglePrototypeComponent,
 }: {
   workflow: WorkflowType;
+  canvaState?: CanvaState | null;
   onToast?: (message: string) => void;
   toolbarLeftPadding?: number;
   generatedHtml?: string | null;
   onCopyAsDesign?: () => Promise<void>;
+  onSaveToProjectAssets?: () => void;
+  onShare?: () => void;
+  linkedPrototypeComponents?: LinkedPrototypeComponent[];
+  selectedPrototypeComponentIds?: string[];
+  onTogglePrototypeComponent?: (componentId: string) => void;
 }) {
   return (
     <motion.div
@@ -2845,18 +4144,28 @@ function PreviewStage({
       transition={{ duration: 0.2 }}
       className="absolute inset-0"
     >
-      {workflow === 'ui-design' && <UIDesignCanvas />}
+      {workflow === 'ui-design' && <UIDesignCanvas onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
       {workflow === 'demo' && (
         <DemoCanvas
           onToast={onToast}
           toolbarLeftPadding={toolbarLeftPadding}
           generatedHtml={generatedHtml}
           onCopyAsDesign={onCopyAsDesign}
+          onSaveToProjectAssets={onSaveToProjectAssets}
+          onShare={onShare}
+          linkedPrototypeComponents={linkedPrototypeComponents}
+          selectedPrototypeComponentIds={selectedPrototypeComponentIds}
+          onTogglePrototypeComponent={onTogglePrototypeComponent}
         />
       )}
-      {workflow === 'creative' && <CreativeCanvas promptText={CREATIVE_DEFAULT_PROMPT} onToast={onToast} />}
-      {workflow === 'research' && <CompetitiveAnalysisCanvas onToast={onToast} />}
-      {workflow === 'interview' && <InterviewCanvas />}
+      {workflow === 'creative' && <CreativeCanvas canvaState={canvaState ?? null} onToast={onToast} onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'research' && <CompetitiveAnalysisCanvas onToast={onToast} onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'interview' && <InterviewCanvas onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'insight-viewpoint' && <InsightTableView onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'insight-outline' && <InsightOutlineMindMap onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'insight-persona' && <InsightPersonaCard onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'insight-mindmap' && <InsightLogicMindMap onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
+      {workflow === 'insight-eval-question' && <InsightEvalQuestionTable onSaveToProjectAssets={onSaveToProjectAssets} onShare={onShare} />}
     </motion.div>
   );
 }
@@ -2924,11 +4233,77 @@ function DemoPublishModal({ url, onClose }: { url: string; onClose: () => void }
   );
 }
 
+function ShareLinkModal({
+  url,
+  onClose,
+}: {
+  url: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[600] flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.18 }}
+        onClick={(event) => event.stopPropagation()}
+        className="relative bg-white rounded-2xl shadow-[0_8px_40px_rgba(0,0,0,0.18)] p-6 w-[420px] mx-4"
+      >
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-[#eff6ff] flex items-center justify-center shrink-0">
+            <Share2 size={18} className="text-[#1476ff]" />
+          </div>
+          <div>
+            <p className="text-[16px] font-semibold text-[#191919]">分享链接已生成</p>
+            <p className="text-[12px] text-[#999]">将此链接发送给他人即可查看当前结果</p>
+          </div>
+          <button onClick={onClose} className="ml-auto w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#f5f5f5] text-[#bbb] hover:text-[#666] transition-colors">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 bg-[#f5f5f5] rounded-xl px-3 py-2.5 mb-4">
+          <span className="flex-1 text-[12px] text-[#555] truncate font-mono">{url}</span>
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-white border border-[rgba(0,0,0,0.1)] text-[10px] text-[#333] hover:bg-[#f9f9f9] transition-colors shrink-0"
+          >
+            {copied ? <Check size={10} className="text-[#22c55e]" /> : <Copy size={10} />}
+            {copied ? '已复制' : '复制链接'}
+          </button>
+        </div>
+
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center justify-center gap-1.5 w-full h-9 rounded-xl bg-[#1476ff] text-[12px] text-white font-medium hover:bg-[#1060d0] transition-colors"
+        >
+          <ExternalLink size={12} />
+          在新标签页打开
+        </a>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── DeliveryTabBar ───────────────────────────────────────────────────────────
 function DeliveryTabBar({
   deliverables,
   activeWorkflow,
   readyWorkflows,
+  canvaState,
   onSelect,
   onClose,
   onFirstTabOffsetChange,
@@ -2936,6 +4311,7 @@ function DeliveryTabBar({
   deliverables: WorkflowType[];
   activeWorkflow: WorkflowType | null;
   readyWorkflows: WorkflowType[];
+  canvaState?: CanvaState | null;
   onSelect: (wf: WorkflowType) => void;
   onClose: (wf: WorkflowType) => void;
   onFirstTabOffsetChange?: (offset: number) => void;
@@ -2978,6 +4354,11 @@ function DeliveryTabBar({
     'creative': Image,
     'research': BarChart2,
     'interview': Users,
+    'insight-viewpoint': Users,
+    'insight-outline': Users,
+    'insight-persona': Users,
+    'insight-mindmap': Users,
+    'insight-eval-question': Users,
   };
 
   const handleTabsWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -3009,7 +4390,7 @@ function DeliveryTabBar({
               {deliverables.map(wf => {
                 const isActive = activeWorkflow === wf;
                 const isReady = readyWorkflows.includes(wf);
-                const meta = WORKFLOW_META[wf];
+                const meta = getWorkflowMetaForState(wf, canvaState);
                 const Icon = IconByWorkflow[wf];
                 return (
                   <div key={wf} ref={deliverables[0] === wf ? firstTabRef : undefined} className="relative flex items-center h-full shrink-0">
@@ -3051,6 +4432,7 @@ function ResultWorkspace({
   deliverables,
   activeWorkflow,
   readyWorkflows,
+  canvaState,
   onReset,
   onTabSelect,
   onTabClose,
@@ -3058,10 +4440,16 @@ function ResultWorkspace({
   onToast,
   generatedHtml,
   onCopyAsDesign,
+  onSaveToProjectAssets,
+  onCreateShareLink,
+  linkedPrototypeComponents,
+  selectedPrototypeComponentIds,
+  onTogglePrototypeComponent,
 }: {
   deliverables: WorkflowType[];
   activeWorkflow: WorkflowType | null;
   readyWorkflows: WorkflowType[];
+  canvaState?: CanvaState | null;
   onReset: () => void;
   onTabSelect: (wf: WorkflowType) => void;
   onTabClose: (wf: WorkflowType) => void;
@@ -3069,13 +4457,24 @@ function ResultWorkspace({
   onToast?: (message: string) => void;
   generatedHtml?: string | null;
   onCopyAsDesign?: () => Promise<void>;
+  onSaveToProjectAssets: () => void;
+  onCreateShareLink: () => string | null;
+  linkedPrototypeComponents: LinkedPrototypeComponent[];
+  selectedPrototypeComponentIds: string[];
+  onTogglePrototypeComponent: (componentId: string) => void;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [firstTabOffsetLeft, setFirstTabOffsetLeft] = useState(0);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const canvasReady = activeWorkflow !== null && readyWorkflows.includes(activeWorkflow);
   const toolbarLeftPadding = fullscreen ? firstTabOffsetLeft : Math.max(firstTabOffsetLeft - 12, 0);
 
   const canvasKey = activeWorkflow === null ? '__empty__' : !canvasReady ? `__skeleton__${activeWorkflow}` : activeWorkflow;
+  const handleShare = useCallback(() => {
+    const nextUrl = onCreateShareLink();
+    if (nextUrl) setShareUrl(nextUrl);
+  }, [onCreateShareLink]);
+
   const canvasContent = (
     <div className="relative w-full h-full">
       <AnimatePresence mode="wait">
@@ -3094,13 +4493,22 @@ function ResultWorkspace({
           ) : (
             <PreviewStage
               workflow={activeWorkflow}
+              canvaState={canvaState}
               onToast={onToast}
               toolbarLeftPadding={toolbarLeftPadding}
               generatedHtml={generatedHtml}
               onCopyAsDesign={onCopyAsDesign}
+              onSaveToProjectAssets={onSaveToProjectAssets}
+              onShare={handleShare}
+              linkedPrototypeComponents={linkedPrototypeComponents}
+              selectedPrototypeComponentIds={selectedPrototypeComponentIds}
+              onTogglePrototypeComponent={onTogglePrototypeComponent}
             />
           )}
         </motion.div>
+      </AnimatePresence>
+      <AnimatePresence>
+        {shareUrl && <ShareLinkModal url={shareUrl} onClose={() => setShareUrl(null)} />}
       </AnimatePresence>
     </div>
   );
@@ -3114,6 +4522,7 @@ function ResultWorkspace({
             deliverables={deliverables}
             activeWorkflow={activeWorkflow}
             readyWorkflows={readyWorkflows}
+            canvaState={canvaState}
             onSelect={onTabSelect}
             onClose={onTabClose}
             onFirstTabOffsetChange={setFirstTabOffsetLeft}
@@ -3131,6 +4540,7 @@ function ResultWorkspace({
         deliverables={deliverables}
         activeWorkflow={activeWorkflow}
         readyWorkflows={readyWorkflows}
+        canvaState={canvaState}
         onSelect={onTabSelect}
         onClose={onTabClose}
         onFirstTabOffsetChange={setFirstTabOffsetLeft}
@@ -3189,7 +4599,7 @@ const AGENT_OPTIONS: { id: ComposerAgent; label: string; icon: React.ReactNode }
   { id: 'research',   label: 'Octo Insight', icon: <Users size={12} /> },
   { id: 'ui-design',  label: 'Octo Design',  icon: <Layers size={12} /> },
   { id: 'demo',       label: 'Octo Make',    icon: <Play size={12} /> },
-  { id: 'creative',   label: 'Octo Canvas',  icon: <Wand2 size={12} /> },
+  { id: 'creative',   label: 'Octo Canva',  icon: <Wand2 size={12} /> },
   { id: 'review',     label: 'Octo Review',  icon: <BarChart2 size={12} /> },
 ];
 
@@ -3199,6 +4609,11 @@ const WORKFLOW_TO_AGENT: Record<WorkflowType, ComposerAgent> = {
   'creative': 'creative',
   'research': 'research',
   'interview': 'research',
+  'insight-viewpoint': 'research',
+  'insight-outline': 'research',
+  'insight-persona': 'research',
+  'insight-mindmap': 'research',
+  'insight-eval-question': 'research',
 };
 
 const AGENT_TO_MODE: Record<ComposerAgent, ComposerMode> = {
@@ -3225,12 +4640,31 @@ const SKILL_CATEGORY_UI: Record<SkillMarketCategory, {
 
 type SkillMarketModalCategory = '全部技能' | SkillMarketCategory;
 
-const RESEARCH_OPTIONS = ['深度研究', '访谈观点洞察', '模拟用户访谈'];
-const DESIGN_OPTIONS = ['高保真设计', '低保真设计'];
+const RESEARCH_OPTIONS = ['访谈观点洞察', '评估问题整理', '用研知识问答'];
+const DESIGN_OPTIONS = ['UI页面生成', '页面批量调整', '一致性检查'];
+
+const INSIGHT_SUB_OPTIONS = ['观点解析', '按提纲聚类', 'AI用户画像', '思维导图'];
+
+const INSIGHT_SUB_TO_WF: Record<string, WorkflowType> = {
+  '观点解析':   'insight-viewpoint',
+  '按提纲聚类': 'insight-outline',
+  'AI用户画像': 'insight-persona',
+  '思维导图':   'insight-mindmap',
+};
+
+const RESEARCH_OPTION_TO_WF: Partial<Record<string, WorkflowType>> = {
+  '评估问题整理': 'insight-eval-question',
+};
+
+const WF_TO_INSIGHT_SUB: Partial<Record<WorkflowType, string>> = {
+  'insight-viewpoint':      '观点解析',
+  'insight-outline':        '按提纲聚类',
+  'insight-persona':        'AI用户画像',
+  'insight-mindmap':        '思维导图',
+  'insight-eval-question':  '评估问题整理',
+};
 
 const DEMO_SPEC_OPTIONS = ['H Design_v1.1', 'DevUI_v1.0.0', 'ICT UI_v3.1.0'];
-
-const CREATIVE_MEDIA_OPTIONS = ['图片', '视频'];
 
 const CREATIVE_MODEL_OPTIONS = [
   { id: 'image-5-lite', label: '图片5.0 Lite', description: '指令响应更精准，生成效果更智能', badge: 'New' },
@@ -3253,11 +4687,95 @@ interface ComposerAttachment {
 
 interface SendPayloadOptions {
   hasDesignAttachment?: boolean;
+  creativePayload?: CanvaSubmissionPayload;
+  insightSubOption?: string;    // 访谈观点洞察的三级子选项名称
+  researchWf?: WorkflowType;    // 非访谈观点洞察时的目标 WorkflowType
 }
 
 interface SelectedComposerSkill {
   id: string;
   name: string;
+}
+
+interface ComposerAssetMentionCandidate {
+  id: string;
+  name: string;
+  sourceLabel: '平台资产' | '项目资产';
+  pathLabel: string;
+  categoryLabel: string;
+  content: string;
+}
+
+interface SelectedComposerAssetMention {
+  id: string;
+  name: string;
+  sourceLabel: '平台资产' | '项目资产';
+  pathLabel: string;
+  categoryLabel: string;
+  content: string;
+}
+
+function buildTemplateAssetMentionContent(
+  card: AssetDocCard,
+  sectionLabel: '用户洞察' | '体验评估',
+  sourceLabel: '平台资产' | '项目资产',
+) {
+  return [
+    `# ${card.title}.${card.format}`,
+    '',
+    `来源：${sourceLabel} / ${sectionLabel}`,
+    `所有者：${card.owner}`,
+    `更新时间：${card.updatedAt}`,
+    `摘要：${card.summary}`,
+  ].join('\n');
+}
+
+function buildDesignSpecMentionContent(source: string, name: string, category: string, description: string) {
+  return [
+    `# ${name}`,
+    '',
+    `来源：平台资产 / 设计系统 / ${source}`,
+    `分类：${category}`,
+    `说明：${description}`,
+  ].join('\n');
+}
+
+function buildIllustrationMentionContent(
+  title: string,
+  category: string,
+  sourceLabel: '平台资产' | '项目资产',
+) {
+  return [
+    `# ${title}`,
+    '',
+    `来源：${sourceLabel} / 插画`,
+    `分类：${category}`,
+    '说明：可用于页面装饰、空状态和引导场景。',
+  ].join('\n');
+}
+
+function buildIconMentionContent(
+  name: string,
+  category: string,
+  sourceLabel: '平台资产' | '项目资产',
+) {
+  return [
+    `# ${name}`,
+    '',
+    `来源：${sourceLabel} / 图标`,
+    `分类：${category}`,
+    '说明：适用于导航、按钮和状态表达。',
+  ].join('\n');
+}
+
+function buildPrototypeSolutionMentionContent(domainLabel: string, name: string, description: string, tags: string[]) {
+  return [
+    `# ${name}`,
+    '',
+    `来源：平台资产 / 原型开发 / ${domainLabel}`,
+    `说明：${description}`,
+    `技术标签：${tags.join(' / ')}`,
+  ].join('\n');
 }
 
 function ChatComposer({
@@ -3268,6 +4786,9 @@ function ChatComposer({
   setMode,
   figmaData,
   onFigmaData,
+  linkedPrototypeComponents,
+  selectedPrototypeComponentIds,
+  onTogglePrototypeComponent,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -3276,6 +4797,9 @@ function ChatComposer({
   setMode: (mode: ComposerMode) => void;
   figmaData?: FigmaDesignData | null;
   onFigmaData?: (data: FigmaDesignData | null) => void;
+  linkedPrototypeComponents: LinkedPrototypeComponent[];
+  selectedPrototypeComponentIds: string[];
+  onTogglePrototypeComponent: (componentId: string) => void;
 }) {
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
@@ -3292,7 +4816,7 @@ function ChatComposer({
   }, [draft, agent]);
   const [showDemoSpecMenu, setShowDemoSpecMenu] = useState(false);
   const [showCreativeMediaMenu, setShowCreativeMediaMenu] = useState(false);
-  const [showCreativeOutputMenu, setShowCreativeOutputMenu] = useState(false);
+  const [showCreativeMoreMenu, setShowCreativeMoreMenu] = useState(false);
   const [showDesignImportModal, setShowDesignImportModal] = useState(false);
   const [showSkillManagementModal, setShowSkillManagementModal] = useState(false);
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillMarketItem | null>(null);
@@ -3302,27 +4826,54 @@ function ChatComposer({
   const [isFigmaParsing, setIsFigmaParsing] = useState(false);
   const [figmaParseError, setFigmaParseError] = useState<string | null>(null);
   const [researchOption, setResearchOption] = useState(RESEARCH_OPTIONS[0]);
+  const [insightSubOption, setInsightSubOption] = useState(INSIGHT_SUB_OPTIONS[0]);
   const [designOption, setDesignOption] = useState(DESIGN_OPTIONS[0]);
   const [showResearchMenu, setShowResearchMenu] = useState(false);
+  const [showInsightSubMenu, setShowInsightSubMenu] = useState(false);
   const [showDesignMenu, setShowDesignMenu] = useState(false);
   const [demoSpec, setDemoSpec] = useState(DEMO_SPEC_OPTIONS[0]);
-  const [creativeMediaType, setCreativeMediaType] = useState(CREATIVE_MEDIA_OPTIONS[0]);
-  const [creativeRatio, setCreativeRatio] = useState('16:9');
-  const [creativeQuality, setCreativeQuality] = useState(CREATIVE_QUALITY_OPTIONS[1]);
+  const [creativeType, setCreativeType] = useState<CanvaMode>('image');
+  const [creativeImageModel, setCreativeImageModel] = useState(DEFAULT_CANVA_STATE.imageModel);
+  const [creativeImageRatio, setCreativeImageRatio] = useState(DEFAULT_CANVA_STATE.imageRatio);
+  const [creativeQuality, setCreativeQuality] = useState(DEFAULT_CANVA_STATE.imageQuality);
+  const [creativeVideoModel, setCreativeVideoModel] = useState(DEFAULT_CANVA_STATE.videoModel);
+  const [creativeVideoFrameMode, setCreativeVideoFrameMode] = useState(DEFAULT_CANVA_STATE.videoFrameMode);
+  const [creativeVideoRatio, setCreativeVideoRatio] = useState(DEFAULT_CANVA_STATE.videoRatio);
+  const [creativeVideoDuration, setCreativeVideoDuration] = useState(DEFAULT_CANVA_STATE.videoDuration);
+  const [selectedEditTool, setSelectedEditTool] = useState<CanvaEditTool>('enhance');
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [referenceImageName, setReferenceImageName] = useState<string | null>(null);
+  const [firstFrameName, setFirstFrameName] = useState<string | null>(null);
+  const [lastFrameName, setLastFrameName] = useState<string | null>(null);
   const [selectedSkills, setSelectedSkills] = useState<SelectedComposerSkill[]>([]);
+  const [selectedAssetMentions, setSelectedAssetMentions] = useState<SelectedComposerAssetMention[]>([]);
   const [composerSkills, setComposerSkills] = useState<SkillMarketItem[]>(loadSkillMarketItems);
+  const [projectAssetSections, setProjectAssetSections] = useState(loadProjectAssets);
   const [activeSlashSkillIndex, setActiveSlashSkillIndex] = useState(0);
+  const [activeAssetMentionIndex, setActiveAssetMentionIndex] = useState(0);
+  const [assetMentionSourceFilter, setAssetMentionSourceFilter] = useState<'平台资产' | '项目资产'>('平台资产');
+  const [assetMentionCategoryFilter, setAssetMentionCategoryFilter] = useState<string | null>(null);
+  const [assetMentionTrigger, setAssetMentionTrigger] = useState<{ start: number; end: number; query: string } | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+
+  useEffect(() => {
+    if (!DESIGN_OPTIONS.includes(designOption)) {
+      setDesignOption(DESIGN_OPTIONS[0]);
+    }
+  }, [designOption]);
   const agentMenuRef = useRef<HTMLDivElement>(null);
   const insertMenuRef = useRef<HTMLDivElement>(null);
   const insertMenuLayerRef = useRef<HTMLDivElement>(null);
+  const assetMentionMenuRef = useRef<HTMLDivElement>(null);
   const researchMenuRef = useRef<HTMLDivElement>(null);
   const designMenuRef = useRef<HTMLDivElement>(null);
   const demoSpecMenuRef = useRef<HTMLDivElement>(null);
   const creativeMediaMenuRef = useRef<HTMLDivElement>(null);
-  const creativeOutputMenuRef = useRef<HTMLDivElement>(null);
+  const creativeMoreMenuRef = useRef<HTMLDivElement>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const referenceInputRef = useRef<HTMLInputElement>(null);
+  const firstFrameInputRef = useRef<HTMLInputElement>(null);
+  const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const composerShellRef = useRef<HTMLDivElement>(null);
 
@@ -3331,7 +4882,7 @@ function ChatComposer({
     setShowDesignMenu(false);
     setShowDemoSpecMenu(false);
     setShowCreativeMediaMenu(false);
-    setShowCreativeOutputMenu(false);
+    setShowCreativeMoreMenu(false);
   }, []);
 
   const closeInsertMenu = useCallback(() => {
@@ -3348,6 +4899,25 @@ function ChatComposer({
 
   const closeSkillDetailModal = useCallback(() => {
     setSelectedSkillDetail(null);
+  }, []);
+
+  const updateAssetMentionTrigger = useCallback((nextDraft: string) => {
+    const input = composerInputRef.current;
+    if (!input) {
+      setAssetMentionTrigger(null);
+      return;
+    }
+    const cursor = input.selectionStart ?? nextDraft.length;
+    const leftText = nextDraft.slice(0, cursor);
+    const match = leftText.match(/(?:^|\s)@([^\s@\]]*)$/);
+    if (!match) {
+      setAssetMentionTrigger(null);
+      return;
+    }
+    const query = match[1] ?? '';
+    const end = cursor;
+    const start = end - query.length - 1;
+    setAssetMentionTrigger({ start, end, query });
   }, []);
 
   const handleFigmaImportConfirm = useCallback(async () => {
@@ -3393,7 +4963,11 @@ function ChatComposer({
       if (!designMenuRef.current?.contains(event.target as Node)) setShowDesignMenu(false);
       if (!demoSpecMenuRef.current?.contains(event.target as Node)) setShowDemoSpecMenu(false);
       if (!creativeMediaMenuRef.current?.contains(event.target as Node)) setShowCreativeMediaMenu(false);
-      if (!creativeOutputMenuRef.current?.contains(event.target as Node)) setShowCreativeOutputMenu(false);
+      if (!creativeMoreMenuRef.current?.contains(event.target as Node)) setShowCreativeMoreMenu(false);
+      if (
+        !assetMentionMenuRef.current?.contains(event.target as Node)
+        && !composerInputRef.current?.contains(event.target as Node)
+      ) setAssetMentionTrigger(null);
     };
     window.addEventListener('mousedown', onPointerDown);
     return () => window.removeEventListener('mousedown', onPointerDown);
@@ -3406,6 +4980,16 @@ function ChatComposer({
     return () => {
       window.removeEventListener(SKILL_MARKET_UPDATED_EVENT, syncSkills as EventListener);
       window.removeEventListener('storage', syncSkills);
+    };
+  }, []);
+
+  useEffect(() => {
+    const syncProjectAssets = () => setProjectAssetSections(loadProjectAssets());
+    window.addEventListener(PROJECT_ASSETS_UPDATED_EVENT, syncProjectAssets as EventListener);
+    window.addEventListener('storage', syncProjectAssets);
+    return () => {
+      window.removeEventListener(PROJECT_ASSETS_UPDATED_EVENT, syncProjectAssets as EventListener);
+      window.removeEventListener('storage', syncProjectAssets);
     };
   }, []);
 
@@ -3471,6 +5055,104 @@ function ChatComposer({
     [composerSkills],
   );
 
+  const assetMentionCandidates = useMemo<ComposerAssetMentionCandidate[]>(() => {
+    const insightDocCandidates: ComposerAssetMentionCandidate[] = USER_INSIGHT_TEMPLATES.map((item) => {
+      const sourceLabel = item.source === 'platform' ? '平台资产' : '项目资产';
+      return {
+        id: `ui-${item.id}`,
+        name: `${item.title}.${item.format}`,
+        sourceLabel,
+        pathLabel: sourceLabel,
+        categoryLabel: '用户洞察',
+        content: buildTemplateAssetMentionContent(item, '用户洞察', sourceLabel),
+      };
+    });
+
+    const experienceDocCandidates: ComposerAssetMentionCandidate[] = EXPERIENCE_EVAL_TEMPLATES.map((item) => {
+      const sourceLabel = item.source === 'platform' ? '平台资产' : '项目资产';
+      return {
+        id: `ee-${item.id}`,
+        name: `${item.title}.${item.format}`,
+        sourceLabel,
+        pathLabel: sourceLabel,
+        categoryLabel: '体验评估',
+        content: buildTemplateAssetMentionContent(item, '体验评估', sourceLabel),
+      };
+    });
+
+    const designSpecCandidates: ComposerAssetMentionCandidate[] = DESIGN_SPEC_SOURCES.flatMap((source) =>
+      DESIGN_SPECS[source].map((item) => ({
+        id: `spec-${source}-${item.id}`,
+        name: `${item.name}（${source}）`,
+        sourceLabel: '平台资产' as const,
+        pathLabel: '平台资产',
+        categoryLabel: '设计系统',
+        content: buildDesignSpecMentionContent(source, item.name, item.category, item.description),
+      })),
+    );
+
+    const illustrationCandidates: ComposerAssetMentionCandidate[] = ILLUSTRATIONS.map((item) => {
+      const sourceLabel = item.source === 'platform' ? '平台资产' : '项目资产';
+      return {
+        id: `illustration-${item.id}`,
+        name: `${item.title}.png`,
+        sourceLabel,
+        pathLabel: sourceLabel,
+        categoryLabel: '插画',
+        content: buildIllustrationMentionContent(item.title, item.category, sourceLabel),
+      };
+    });
+
+    const iconCandidates: ComposerAssetMentionCandidate[] = ICONS.map((item) => {
+      const sourceLabel = item.source === 'platform' ? '平台资产' : '项目资产';
+      return {
+        id: `icon-${item.id}`,
+        name: `${item.name}.svg`,
+        sourceLabel,
+        pathLabel: sourceLabel,
+        categoryLabel: '图标',
+        content: buildIconMentionContent(item.name, item.category, sourceLabel),
+      };
+    });
+
+    const prototypeCandidates: ComposerAssetMentionCandidate[] = PROTOTYPE_DOMAINS.flatMap((domain) =>
+      domain.solutions.map((solution) => ({
+        id: `prototype-${domain.key}-${solution.id}`,
+        name: `${solution.name}.md`,
+        sourceLabel: '平台资产' as const,
+        pathLabel: '平台资产',
+        categoryLabel: '原型开发',
+        content: buildPrototypeSolutionMentionContent(domain.label, solution.name, solution.description, solution.tags),
+      })),
+    );
+
+    const projectCandidates: ComposerAssetMentionCandidate[] = [];
+    projectAssetSections.forEach((section) => {
+      section.folders.forEach((folder) => {
+        folder.files.forEach((file) => {
+          projectCandidates.push({
+            id: `project-${file.id}`,
+            name: file.name,
+            sourceLabel: '项目资产',
+            pathLabel: '项目资产',
+            categoryLabel: section.label,
+            content: file.content,
+          });
+        });
+      });
+    });
+
+    return [
+      ...projectCandidates,
+      ...insightDocCandidates,
+      ...experienceDocCandidates,
+      ...designSpecCandidates,
+      ...illustrationCandidates,
+      ...iconCandidates,
+      ...prototypeCandidates,
+    ];
+  }, [projectAssetSections]);
+
   const slashCommandMatch = useMemo(
     () => draft.match(/(?:^|\s)\/([^\s]*)$/),
     [draft],
@@ -3482,6 +5164,33 @@ function ChatComposer({
     if (!query) return installedSkills;
     return installedSkills.filter(skill => skill.name.toLowerCase().includes(query));
   }, [installedSkills, slashCommandMatch]);
+
+  const sourceAssetMentionCategories = useMemo(() => {
+    const labels = Array.from(
+      new Set(
+        assetMentionCandidates
+          .filter((item) => item.sourceLabel === assetMentionSourceFilter)
+          .map((item) => item.categoryLabel),
+      ),
+    );
+    const ordered = ['用户洞察', '设计系统', '插画', '图标', '原型开发', '体验评估'];
+    const known = ordered.filter((label) => labels.includes(label));
+    const rest = labels.filter((label) => !ordered.includes(label));
+    return [...known, ...rest];
+  }, [assetMentionCandidates, assetMentionSourceFilter]);
+
+  const filteredAssetMentionCandidates = useMemo(() => {
+    if (!assetMentionTrigger) return [];
+    const query = assetMentionTrigger.query.trim().toLowerCase();
+    let sourceFiltered = assetMentionCandidates.filter((item) => item.sourceLabel === assetMentionSourceFilter);
+    if (assetMentionCategoryFilter) {
+      sourceFiltered = sourceFiltered.filter((item) => item.categoryLabel === assetMentionCategoryFilter);
+    }
+    if (!query) return sourceFiltered.slice(0, 8);
+    return sourceFiltered
+      .filter((item) => item.name.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [assetMentionCandidates, assetMentionCategoryFilter, assetMentionSourceFilter, assetMentionTrigger]);
 
   const activeCategorySkills = useMemo(
     () => skillMarketCategory === '全部技能'
@@ -3500,16 +5209,70 @@ function ChatComposer({
     setActiveSlashSkillIndex(0);
   }, [slashCommandMatch?.[1]]);
 
+  useEffect(() => {
+    setActiveAssetMentionIndex(0);
+  }, [assetMentionSourceFilter, assetMentionTrigger?.query]);
+
+  useEffect(() => {
+    setAssetMentionCategoryFilter(null);
+  }, [assetMentionSourceFilter]);
+
+  useEffect(() => {
+    if (!assetMentionCategoryFilter) return;
+    if (!sourceAssetMentionCategories.includes(assetMentionCategoryFilter)) {
+      setAssetMentionCategoryFilter(null);
+    }
+  }, [assetMentionCategoryFilter, sourceAssetMentionCategories]);
+
+  useEffect(() => {
+    if (!assetMentionTrigger) {
+      setAssetMentionCategoryFilter(null);
+      setActiveAssetMentionIndex(0);
+    }
+  }, [assetMentionTrigger]);
+
   const handleInsertSkill = useCallback((skillName: string) => {
     setSelectedSkills(prev => {
       if (prev.some(skill => skill.name === skillName)) return prev;
       return [...prev, { id: `skill-${skillName}`, name: skillName }];
     });
     setDraft(prev => prev.replace(/(?:^|\s)\/[^\s]*$/, match => (match.startsWith(' ') ? ' ' : '')));
+    setAssetMentionTrigger(null);
     setShowSkillsMenu(false);
     closeInsertMenu();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   }, [closeInsertMenu, setDraft]);
+
+  const handleInsertAssetMention = useCallback((candidate: ComposerAssetMentionCandidate) => {
+    if (!assetMentionTrigger) return;
+
+    const trigger = assetMentionTrigger;
+    const nextDraft = `${draft.slice(0, trigger.start)}${draft.slice(trigger.end)}`.replace(/\s{2,}/g, ' ');
+
+    setDraft(nextDraft);
+    setSelectedAssetMentions((prev) => {
+      const nextItem: SelectedComposerAssetMention = {
+        id: candidate.id,
+        name: candidate.name,
+        sourceLabel: candidate.sourceLabel,
+        pathLabel: candidate.pathLabel,
+        categoryLabel: candidate.categoryLabel,
+        content: candidate.content,
+      };
+      if (prev.some((item) => item.id === candidate.id)) return prev;
+      return [...prev, nextItem];
+    });
+    setAssetMentionTrigger(null);
+    setActiveAssetMentionIndex(0);
+
+    requestAnimationFrame(() => {
+      const input = composerInputRef.current;
+      if (!input) return;
+      const cursor = Math.min(trigger.start, nextDraft.length);
+      input.focus();
+      input.setSelectionRange(cursor, cursor);
+    });
+  }, [assetMentionTrigger, draft, setDraft]);
 
   const toggleComposerSkill = useCallback((skillId: string) => {
     setComposerSkills(prev => {
@@ -3539,24 +5302,194 @@ function ChatComposer({
     if (!draft.trim()) setIntentDismissed(false);
   }, [draft]);
 
+  const resetCreativeInputs = useCallback(() => {
+    setAttachments([]);
+    setReferenceImageName(null);
+    setFirstFrameName(null);
+    setLastFrameName(null);
+  }, []);
+
+  const buildCreativePayload = useCallback((override?: Partial<CanvaSubmissionPayload>): CanvaSubmissionPayload => {
+    const imageAttachments = attachments.filter((item) => item.type === 'image').map((item) => item.name);
+    const mode = override?.mode ?? creativeType;
+    const prompt = (override?.prompt ?? draft).trim();
+
+    return {
+      mode,
+      prompt,
+      imageModel: override?.imageModel ?? creativeImageModel,
+      imageRatio: override?.imageRatio ?? creativeImageRatio,
+      imageQuality: override?.imageQuality ?? creativeQuality,
+      videoModel: override?.videoModel ?? creativeVideoModel,
+      videoFrameMode: override?.videoFrameMode ?? creativeVideoFrameMode,
+      videoRatio: override?.videoRatio ?? creativeVideoRatio,
+      videoDuration: override?.videoDuration ?? creativeVideoDuration,
+      editTool: override?.editTool ?? selectedEditTool,
+      attachmentNames: override?.attachmentNames ?? imageAttachments,
+      referenceImageName: override?.referenceImageName ?? referenceImageName,
+      firstFrameName: override?.firstFrameName ?? firstFrameName,
+      lastFrameName: override?.lastFrameName ?? lastFrameName,
+      requiresUpload: override?.requiresUpload,
+    };
+  }, [
+    attachments,
+    creativeImageModel,
+    creativeImageRatio,
+    creativeQuality,
+    creativeType,
+    creativeVideoDuration,
+    creativeVideoFrameMode,
+    creativeVideoModel,
+    creativeVideoRatio,
+    draft,
+    firstFrameName,
+    lastFrameName,
+    referenceImageName,
+    selectedEditTool,
+  ]);
+
+  const handleCreativeImageUpload = useCallback((kind: 'reference' | 'first' | 'last', files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+
+    if (kind === 'reference') setReferenceImageName(file.name);
+    if (kind === 'first') setFirstFrameName(file.name);
+    if (kind === 'last') setLastFrameName(file.name);
+  }, []);
+
+  const handleCreativeToolCardClick = useCallback((tool: CanvaEditTool) => {
+    setCreativeType('edit');
+    setSelectedEditTool(tool);
+    const mentionContext = selectedAssetMentions.length > 0
+      ? [
+        '【引用资产】',
+        ...selectedAssetMentions.map((item, index) => [
+          `${index + 1}. ${item.name}`,
+          `来源：${item.pathLabel} / ${item.categoryLabel}`,
+          item.content,
+        ].join('\n')),
+      ].join('\n\n')
+      : '';
+    const basePrompt = draft.trim() || `使用${getCanvaEditToolLabel(tool)}处理图片`;
+    const payload = buildCreativePayload({
+      mode: 'edit',
+      editTool: tool,
+      prompt: [basePrompt, mentionContext].filter(Boolean).join('\n\n'),
+      requiresUpload: attachments.filter((item) => item.type === 'image').length === 0,
+    });
+    onSend(payload.prompt, { creativePayload: payload });
+    if (!payload.requiresUpload) {
+      setDraft('');
+      setSelectedSkills([]);
+      setSelectedAssetMentions([]);
+      resetCreativeInputs();
+    }
+  }, [attachments, buildCreativePayload, draft, onSend, resetCreativeInputs, selectedAssetMentions]);
+
   const handleSubmit = useCallback(() => {
     const content = draft.trim();
-    if (!content && attachments.length === 0) return;
+    const mentionContext = selectedAssetMentions.length > 0
+      ? [
+        '【引用资产】',
+        ...selectedAssetMentions.map((item, index) => [
+          `${index + 1}. ${item.name}`,
+          `来源：${item.pathLabel} / ${item.categoryLabel}`,
+          item.content,
+        ].join('\n')),
+      ].join('\n\n')
+      : '';
+    const contentWithMentionContext = [content, mentionContext].filter(Boolean).join('\n\n');
+    const imageAttachments = attachments.filter((item) => item.type === 'image');
+    const hasCreativeSubmission = agent === 'creative'
+      && (
+        Boolean(content)
+        || attachments.length > 0
+        || Boolean(referenceImageName)
+        || Boolean(firstFrameName)
+        || Boolean(lastFrameName)
+        || creativeType === 'edit'
+      );
+    const hasAssetMentionSubmission = selectedAssetMentions.length > 0;
+    if (!content && attachments.length === 0 && !hasCreativeSubmission && !hasAssetMentionSubmission) return;
     const hasDesignAttachment = attachments.some((item) => item.type === 'design');
+
+    if (agent === 'creative') {
+      const fallbackPrompt = creativeType === 'video'
+        ? '请根据当前设置生成创意视频'
+        : creativeType === 'edit'
+          ? `请使用${getCanvaEditToolLabel(selectedEditTool)}处理当前图片`
+          : '请根据当前设置生成创意图片';
+      const creativePrompt = contentWithMentionContext || fallbackPrompt;
+      const creativePayload = buildCreativePayload({
+        prompt: creativePrompt,
+        requiresUpload: creativeType === 'edit' && imageAttachments.length === 0,
+      });
+      onSend(creativePrompt, { creativePayload });
+      setDraft('');
+      setSelectedSkills([]);
+      setSelectedAssetMentions([]);
+      if (!creativePayload.requiresUpload) resetCreativeInputs();
+      closeInsertMenu();
+      return;
+    }
 
     const attachmentLine = attachments.length > 0
       ? `已附带附件：${attachments.map(item => item.type === 'design' ? `设计稿 ${item.name}` : item.name).join('、')}`
       : '';
-    const composed = [attachmentLine, content].filter(Boolean).join('\n');
-    onSend(composed, { hasDesignAttachment });
+    const composed = [attachmentLine, contentWithMentionContext].filter(Boolean).join('\n');
+    const insightSub = agent === 'research' && researchOption === '访谈观点洞察'
+      ? insightSubOption : undefined;
+    const researchWf = agent === 'research' && researchOption !== '访谈观点洞察'
+      ? RESEARCH_OPTION_TO_WF[researchOption] : undefined;
+    onSend(composed, { hasDesignAttachment, insightSubOption: insightSub, researchWf });
     setAttachments([]);
     if (hasDesignAttachment) onFigmaData?.(null);
     setSelectedSkills([]);
+    setSelectedAssetMentions([]);
     closeInsertMenu();
-  }, [attachments, closeInsertMenu, draft, onFigmaData, onSend]);
+  }, [
+    agent,
+    attachments,
+    buildCreativePayload,
+    closeInsertMenu,
+    creativeType,
+    draft,
+    firstFrameName,
+    insightSubOption,
+    lastFrameName,
+    onFigmaData,
+    onSend,
+    referenceImageName,
+    researchOption,
+    resetCreativeInputs,
+    selectedAssetMentions,
+    selectedEditTool,
+  ]);
 
   const currentAgentOption = AGENT_OPTIONS.find(o => o.id === agent) ?? AGENT_OPTIONS[0];
-  const canSend = draft.trim().length > 0 || attachments.length > 0;
+  const selectedPrototypeComponents = useMemo(
+    () => linkedPrototypeComponents.filter((component) => selectedPrototypeComponentIds.includes(component.id)),
+    [linkedPrototypeComponents, selectedPrototypeComponentIds],
+  );
+  const prototypeSelectorLabel = selectedPrototypeComponents[0]?.name ?? '开发组件';
+  const needsUpload = agent === 'research'
+    && (researchOption === '访谈观点洞察' || researchOption === '评估问题整理')
+    && attachments.length === 0;
+
+  const canSend = (draft.trim().length > 0
+    || attachments.length > 0
+    || selectedAssetMentions.length > 0
+    || (agent === 'creative' && (
+      creativeType === 'edit'
+      || Boolean(referenceImageName)
+      || Boolean(firstFrameName)
+      || Boolean(lastFrameName)
+    ))) && !needsUpload;
+  const showAssetMentionCategoryList = Boolean(
+    assetMentionTrigger
+    && !assetMentionCategoryFilter
+    && !assetMentionTrigger.query.trim(),
+  );
   const isAgentSelected = true;
   const composerShellStyle = useMemo<React.CSSProperties>(() => ({
     border: '1px solid transparent',
@@ -3586,6 +5519,27 @@ function ChatComposer({
         className="hidden"
         accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.zip"
         onChange={handleUploadFiles}
+      />
+      <input
+        ref={referenceInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={(event) => handleCreativeImageUpload('reference', event.target.files)}
+      />
+      <input
+        ref={firstFrameInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={(event) => handleCreativeImageUpload('first', event.target.files)}
+      />
+      <input
+        ref={lastFrameInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={(event) => handleCreativeImageUpload('last', event.target.files)}
       />
       <div
         ref={composerShellRef}
@@ -3634,8 +5588,63 @@ function ChatComposer({
             ))}
           </div>
         )}
+        {agent === 'creative' && creativeType === 'edit' && (
+          <div className="relative z-[1] mx-4 mt-3 mb-1 grid grid-cols-2 overflow-hidden rounded-[14px] border border-[rgba(25,25,25,0.08)] bg-white">
+            {CANVA_EDIT_TOOL_OPTIONS.map((tool, index) => {
+              const isActive = selectedEditTool === tool.id;
+              const isRight = index % 2 === 1;
+              const isBottom = index >= 2;
+              return (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => handleCreativeToolCardClick(tool.id)}
+                  className={`px-3 py-3 text-left transition-colors ${
+                    isActive ? 'bg-[#f8fbff]' : 'hover:bg-[#fafafa]'
+                  } ${!isRight ? 'border-r border-[rgba(25,25,25,0.08)]' : ''} ${isBottom ? 'border-t border-[rgba(25,25,25,0.08)]' : ''}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-[10px] flex items-center justify-center" style={{ backgroundColor: tool.bg, color: tool.color }}>
+                      <tool.Icon size={14} />
+                    </span>
+                    <span className="text-[12px] font-medium text-[#191919]">{tool.label}</span>
+                  </div>
+                  <div className="mt-1 text-[10px] text-[#888] leading-[1.5]">{tool.description}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {agent === 'creative' && creativeType === 'video' && (
+          <div className="relative z-[1] mx-4 mt-3 mb-1 grid grid-cols-2 gap-2">
+            {[
+              { key: 'first', label: '首帧', value: firstFrameName, onClick: () => firstFrameInputRef.current?.click() },
+              { key: 'last', label: '尾帧', value: lastFrameName, onClick: () => lastFrameInputRef.current?.click() },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={item.onClick}
+                className="h-10 rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-[#fafafa] px-3 text-left text-[12px] text-[#555] hover:bg-[#f5f5f5] transition-colors"
+              >
+                {item.value ? `${item.label}：${item.value}` : `上传${item.label}`}
+              </button>
+            ))}
+          </div>
+        )}
+        {agent === 'creative' && creativeType === 'image' && (
+          <div className="relative z-[1] mx-4 mt-3 mb-1">
+            <button
+              type="button"
+              onClick={() => referenceInputRef.current?.click()}
+              className="h-10 w-full rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-[#fafafa] px-3 text-left text-[12px] text-[#555] hover:bg-[#f5f5f5] transition-colors"
+            >
+              {referenceImageName ? `参考图：${referenceImageName}` : '添加参考图'}
+            </button>
+          </div>
+        )}
         <div className="relative z-[1] px-3 pt-2.5 pb-1.5 h-[133px]">
-          <div className="flex flex-wrap items-start gap-1.5 h-full">
+          <div className="flex flex-wrap content-start items-start gap-1.5 h-full overflow-y-auto pr-1">
             {selectedSkills.map(skill => (
               <div
                 key={skill.id}
@@ -3645,11 +5654,72 @@ function ChatComposer({
                 <span className="text-[10px] font-medium truncate leading-none">{skill.name}</span>
               </div>
             ))}
+            {selectedAssetMentions.map(asset => (
+              <div
+                key={asset.id}
+                className="h-7 max-w-full rounded-[10px] bg-[#f5ecff] text-[#7c3aed] px-1 inline-flex items-center gap-1"
+              >
+                <Layers size={12} />
+                <span className="text-[10px] font-medium truncate leading-none">{asset.name}</span>
+              </div>
+            ))}
             <textarea
               ref={composerInputRef}
               value={draft}
-              onChange={e => setDraft(e.target.value)}
+              onChange={e => {
+                const nextDraft = e.target.value;
+                setDraft(nextDraft);
+                updateAssetMentionTrigger(nextDraft);
+              }}
+              onClick={e => updateAssetMentionTrigger(e.currentTarget.value)}
+              onKeyUp={e => updateAssetMentionTrigger(e.currentTarget.value)}
               onKeyDown={e => {
+                if (assetMentionTrigger) {
+                  if (showAssetMentionCategoryList && e.key === 'ArrowDown' && sourceAssetMentionCategories.length > 0) {
+                    e.preventDefault();
+                    setActiveAssetMentionIndex(prev => (prev + 1) % sourceAssetMentionCategories.length);
+                    return;
+                  }
+                  if (showAssetMentionCategoryList && e.key === 'ArrowUp' && sourceAssetMentionCategories.length > 0) {
+                    e.preventDefault();
+                    setActiveAssetMentionIndex(prev => (prev - 1 + sourceAssetMentionCategories.length) % sourceAssetMentionCategories.length);
+                    return;
+                  }
+                  if (showAssetMentionCategoryList && e.key === 'Enter' && !e.shiftKey && sourceAssetMentionCategories.length > 0) {
+                    e.preventDefault();
+                    setAssetMentionCategoryFilter(
+                      sourceAssetMentionCategories[activeAssetMentionIndex] ?? sourceAssetMentionCategories[0],
+                    );
+                    return;
+                  }
+                  if (!showAssetMentionCategoryList && e.key === 'ArrowDown' && filteredAssetMentionCandidates.length > 0) {
+                    e.preventDefault();
+                    setActiveAssetMentionIndex(prev => (prev + 1) % filteredAssetMentionCandidates.length);
+                    return;
+                  }
+                  if (!showAssetMentionCategoryList && e.key === 'ArrowUp' && filteredAssetMentionCandidates.length > 0) {
+                    e.preventDefault();
+                    setActiveAssetMentionIndex(prev => (prev - 1 + filteredAssetMentionCandidates.length) % filteredAssetMentionCandidates.length);
+                    return;
+                  }
+                  if (!showAssetMentionCategoryList && e.key === 'Enter' && !e.shiftKey && filteredAssetMentionCandidates.length > 0) {
+                    e.preventDefault();
+                    handleInsertAssetMention(
+                      filteredAssetMentionCandidates[activeAssetMentionIndex]
+                        ?? filteredAssetMentionCandidates[0],
+                    );
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    if (assetMentionCategoryFilter) {
+                      setAssetMentionCategoryFilter(null);
+                      return;
+                    }
+                    setAssetMentionTrigger(null);
+                    return;
+                  }
+                }
                 if (slashCommandMatch && filteredSlashSkills.length > 0) {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
@@ -3672,20 +5742,129 @@ function ChatComposer({
                   setDraft(prev => prev.replace(/(?:^|\s)\/[^\s]*$/, match => (match.startsWith(' ') ? ' ' : '')));
                   return;
                 }
-                if ((e.key === 'Backspace' || e.key === 'Delete') && draft.length === 0 && selectedSkills.length > 0) {
-                  e.preventDefault();
-                  setSelectedSkills(prev => prev.slice(0, -1));
-                  return;
+                if ((e.key === 'Backspace' || e.key === 'Delete') && draft.length === 0) {
+                  if (selectedAssetMentions.length > 0) {
+                    e.preventDefault();
+                    setSelectedAssetMentions(prev => prev.slice(0, -1));
+                    return;
+                  }
+                  if (selectedSkills.length > 0) {
+                    e.preventDefault();
+                    setSelectedSkills(prev => prev.slice(0, -1));
+                    return;
+                  }
                 }
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   handleSubmit();
                 }
               }}
-              placeholder={selectedSkills.length > 0 ? '' : '描述你想生成的内容，输入 / 唤起技能，或通过 + 上传文件与选择技能...'}
-              className="min-w-[120px] flex-1 self-stretch bg-transparent text-[12px] text-[#191919] outline-none leading-[1.7] py-0.5 resize-none overflow-auto placeholder:text-[rgba(25,25,25,0.5)]"
+              placeholder={(selectedSkills.length > 0 || selectedAssetMentions.length > 0)
+                ? ''
+                : agent === 'research' && researchOption === '访谈观点洞察'
+                  ? '上传访谈逐字稿、访谈大纲，智能构建用户画像等……'
+                  : agent === 'research' && researchOption === '评估问题整理'
+                    ? '上传评估任务书、逐字稿，智能整理问题观点'
+                    : agent === 'research' && researchOption === '用研知识问答'
+                      ? '描述你的研究问题，AI 将基于已有知识库作答……'
+                      : agent === 'creative'
+                        ? (creativeType === 'video'
+                          ? '描述视频内容、镜头节奏和风格，可结合首尾帧生成...'
+                          : creativeType === 'edit'
+                            ? '补充修图要求，或直接发送开始进入修图流程...'
+                            : '描述图片主体、风格、构图和氛围，可附带参考图...')
+                        : '描述你想生成的内容，输入 / 唤起技能，或通过 + 上传文件...'}
+              wrap="soft"
+              className="min-w-0 flex-[1_1_220px] h-auto min-h-[28px] max-h-full self-auto bg-transparent text-[12px] text-[#191919] outline-none leading-[1.7] py-0.5 resize-none overflow-auto whitespace-pre-wrap break-words placeholder:text-[rgba(25,25,25,0.5)]"
             />
           </div>
+
+          <AnimatePresence>
+            {assetMentionTrigger && (
+              <motion.div
+                ref={assetMentionMenuRef}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 6 }}
+                transition={{ duration: 0.12 }}
+                className="absolute left-0 bottom-full mb-2 w-[320px] rounded-[16px] border border-[rgba(25,25,25,0.08)] bg-white shadow-[0_10px_30px_rgba(0,0,0,0.12)] overflow-hidden z-40"
+              >
+                <div className="px-3 pt-2 pb-1 border-b border-[rgba(25,25,25,0.06)]">
+                  <div className="inline-flex items-center gap-1 rounded-[10px] bg-[#f3f4f6] p-1">
+                    {(['平台资产', '项目资产'] as const).map((sourceLabel) => (
+                      <button
+                        key={sourceLabel}
+                        type="button"
+                        onClick={() => setAssetMentionSourceFilter(sourceLabel)}
+                        className={`h-7 px-3 rounded-[8px] text-[11px] font-medium transition-colors ${
+                          assetMentionSourceFilter === sourceLabel
+                            ? 'bg-white text-[#2563eb]'
+                            : 'text-[#666] hover:text-[#2563eb]'
+                        }`}
+                      >
+                        {sourceLabel}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {showAssetMentionCategoryList ? (
+                  sourceAssetMentionCategories.length > 0 ? (
+                    <div className="max-h-[280px] overflow-y-auto py-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                      {sourceAssetMentionCategories.map((categoryLabel, index) => (
+                        <button
+                          key={categoryLabel}
+                          type="button"
+                          onClick={() => setAssetMentionCategoryFilter(categoryLabel)}
+                          className={`w-full px-3 py-2.5 text-left transition-colors flex items-center gap-2 ${
+                            index === activeAssetMentionIndex ? 'bg-[#f5ecff] text-[#7c3aed]' : 'text-[#191919] hover:bg-[#f8fafc]'
+                          }`}
+                        >
+                          <FileText size={14} />
+                          <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{categoryLabel}</span>
+                          <ChevronRight size={14} className="text-[#8a8a8a]" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="px-3 py-4 text-[12px] text-[#999]">当前来源暂无分类</div>
+                  )
+                ) : filteredAssetMentionCandidates.length > 0 ? (
+                  <div className="max-h-[280px] overflow-y-auto py-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    {assetMentionCategoryFilter && (
+                      <button
+                        type="button"
+                        onClick={() => setAssetMentionCategoryFilter(null)}
+                        className="w-full px-3 py-2 text-left transition-colors flex items-center gap-2 text-[#666] hover:bg-[#f8fafc]"
+                      >
+                        <ArrowLeft size={14} />
+                        <span className="text-[12px]">返回分类</span>
+                      </button>
+                    )}
+                    {filteredAssetMentionCandidates.map((item, index) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleInsertAssetMention(item)}
+                        className={`w-full px-3 py-2.5 text-left transition-colors flex items-center gap-2 ${
+                          index === activeAssetMentionIndex ? 'bg-[#f5ecff] text-[#7c3aed]' : 'text-[#191919] hover:bg-[#f8fafc]'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Layers size={14} />
+                            <span className="text-[12px] font-medium truncate">{item.name}</span>
+                          </div>
+                          <div className="mt-0.5 pl-6 text-[10px] text-[#8a8a8a]">{item.categoryLabel}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-3 py-4 text-[12px] text-[#999]">当前分类没有匹配资产</div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <AnimatePresence>
             {slashCommandMatch && (
@@ -3741,7 +5920,7 @@ function ChatComposer({
           </div>
           {/* Agent selector */}
           <div className="relative shrink-0" ref={agentMenuRef}>
-            <div className="flex items-center h-8 rounded-xl border transition-colors bg-[#f1f5ff] border-[#d8e7ff]">
+            <div className="flex items-center h-8 rounded-xl transition-colors bg-[#f1f5ff]">
               <button
                 onClick={() => {
                   setShowAgentMenu(v => !v);
@@ -3758,110 +5937,256 @@ function ChatComposer({
           {agent === 'creative' && (
             <>
               <div className="relative shrink-0 z-[60]" ref={creativeMediaMenuRef}>
-                <button
-                  onClick={() => {
-                    setShowCreativeMediaMenu(v => !v);
-                    setShowDemoSpecMenu(false);
-                    setShowCreativeOutputMenu(false);
-                  }}
-                  className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] text-[#191919] hover:bg-[#f5f5f5] transition-colors"
-                >
-                  <span>{creativeMediaType}</span>
-                  <ChevronDown size={10} />
-                </button>
-                <AnimatePresence>
-                  {showCreativeMediaMenu && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 4 }}
-                      transition={{ duration: 0.12 }}
-                      className="absolute bottom-full left-0 mb-1 w-[120px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-[220]"
-                    >
-                      {CREATIVE_MEDIA_OPTIONS.map(media => (
-                        <button
-                          key={media}
-                          onClick={() => {
-                            setCreativeMediaType(media);
-                            setShowCreativeMediaMenu(false);
-                          }}
-                          className={`w-full text-left px-3 py-2 text-[12px] transition-colors ${creativeMediaType === media ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
-                        >
-                          {media}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                {(() => {
+                  const activeCreativeItem = creativeType === 'edit'
+                    ? CANVA_EDIT_TOOL_OPTIONS.find((item) => item.id === selectedEditTool)
+                    : CANVA_TYPE_OPTIONS.find((item) => item.id === creativeType);
+                  const ActiveIcon = activeCreativeItem?.Icon ?? Image;
+                  const activeLabel = activeCreativeItem?.label ?? '图片生成';
+                  return (
+                    <>
+                      <button
+                        onClick={() => {
+                          setShowCreativeMediaMenu(v => !v);
+                          setShowCreativeMoreMenu(false);
+                        }}
+                        className="flex items-center gap-1 h-8 px-2 rounded-xl text-[12px] text-[#6e48ff] bg-[rgba(44,46,52,0.05)] hover:bg-[rgba(44,46,52,0.08)] transition-colors"
+                      >
+                        <ActiveIcon size={14} />
+                        <span>{activeLabel}</span>
+                        <ChevronDown size={10} className={`transition-transform ${showCreativeMediaMenu ? 'rotate-180' : ''}`} />
+                      </button>
+                      <AnimatePresence>
+                        {showCreativeMediaMenu && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 4 }}
+                            transition={{ duration: 0.12 }}
+                            className="absolute bottom-full left-0 mb-1 w-[240px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-[220]"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setShowCreativeMediaMenu(false)}
+                              className="w-full px-3 py-2.5 text-left flex items-center gap-2 text-[12px] font-medium text-[#333] hover:bg-[#f8fafc] transition-colors"
+                            >
+                              <Sparkles size={14} />
+                              <span>Agent 模式</span>
+                            </button>
 
-              <div className="relative shrink-0 z-[60]" ref={creativeOutputMenuRef}>
+                            {CANVA_TYPE_OPTIONS.map((option) => {
+                              const IconComp = option.Icon;
+                              const active = creativeType === option.id;
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setCreativeType(option.id);
+                                    setShowCreativeMediaMenu(false);
+                                  }}
+                                  className={`w-full px-3 py-2.5 text-left flex items-center gap-2 text-[12px] font-medium transition-colors ${
+                                    active ? 'bg-[#f0f5ff] text-[#1476ff]' : 'text-[#333] hover:bg-[#f8fafc]'
+                                  }`}
+                                >
+                                  <IconComp size={14} />
+                                  <span>{option.label}</span>
+                                </button>
+                              );
+                            })}
+
+                            <div className="mx-3 border-t border-[rgba(25,25,25,0.08)]" />
+
+                            {CANVA_EDIT_TOOL_OPTIONS.map((item) => {
+                              const IconComp = item.Icon;
+                              const active = creativeType === 'edit' && selectedEditTool === item.id;
+                              return (
+                                <button
+                                  key={item.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setCreativeType('edit');
+                                    setSelectedEditTool(item.id);
+                                    setShowCreativeMediaMenu(false);
+                                  }}
+                                  className={`w-full px-3 py-2.5 text-left flex items-center gap-2 text-[12px] font-medium transition-colors ${
+                                    active ? 'bg-[#f0f5ff] text-[#1476ff]' : 'text-[#333] hover:bg-[#f8fafc]'
+                                  }`}
+                                >
+                                  <IconComp size={14} />
+                                  <span>{item.label}</span>
+                                </button>
+                              );
+                            })}
+
+                            <div className="mx-3 border-t border-[rgba(25,25,25,0.08)]" />
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onToast?.('场景融合功能即将上线');
+                                setShowCreativeMediaMenu(false);
+                              }}
+                              className="w-full px-3 py-2.5 text-left flex items-center gap-2 text-[12px] font-medium text-[#333] hover:bg-[#f8fafc] transition-colors"
+                            >
+                              <Layers size={14} />
+                              <span>场景融合</span>
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
+                  );
+                })()}
+              </div>
+              <div className="relative shrink-0 z-[60]" ref={creativeMoreMenuRef}>
                 <button
                   onClick={() => {
-                    setShowCreativeOutputMenu(v => !v);
-                    setShowDemoSpecMenu(false);
+                    setShowCreativeMoreMenu(v => !v);
                     setShowCreativeMediaMenu(false);
                   }}
-                  className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+                  className="flex items-center gap-1 h-8 px-2 rounded-xl text-[12px] text-[#6e48ff] bg-[rgba(44,46,52,0.05)] hover:bg-[rgba(44,46,52,0.08)] transition-colors"
                 >
-                  <span>{creativeQuality}</span>
-                  <ChevronDown size={10} />
+                  <Box size={12} />
+                  <span>设置</span>
                 </button>
                 <AnimatePresence>
-                  {showCreativeOutputMenu && (
+                  {showCreativeMoreMenu && (
                     <motion.div
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 4 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute bottom-full right-0 mb-1 w-[240px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] p-3 z-[220]"
+                      className="absolute bottom-full right-0 mb-1 w-[272px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] p-3 z-[220]"
                     >
                       <div>
-                        <p className="text-[10px] font-medium text-[#999]">图片比例</p>
-                        <div className="mt-2 grid grid-cols-4 gap-1.5">
-                          {CREATIVE_RATIO_OPTIONS.map((ratio, idx) => {
-                            const isActive = creativeRatio === ratio;
-                            return (
-                              <button
-                                key={`${ratio}-${idx}`}
-                                onClick={() => setCreativeRatio(ratio)}
-                                className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
-                                  isActive
-                                    ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
-                                    : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
-                                }`}
-                              >
-                                {ratio}
-                              </button>
-                            );
-                          })}
+                        <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
+                          <Box size={11} />
+                          <span>{creativeType === 'edit' ? '修图工具' : '模型选择'}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {(creativeType === 'video' ? CANVA_VIDEO_MODEL_OPTIONS : creativeType === 'edit' ? CANVA_EDIT_TOOL_OPTIONS.map((item) => item.label) : CANVA_IMAGE_MODEL_OPTIONS).map((option) => (
+                            <button
+                              key={option}
+                              onClick={() => {
+                                if (creativeType === 'video') setCreativeVideoModel(option);
+                                else if (creativeType === 'edit') {
+                                  const toolId = CANVA_EDIT_TOOL_OPTIONS.find((item) => item.label === option)?.id;
+                                  if (toolId) setSelectedEditTool(toolId);
+                                } else setCreativeImageModel(option);
+                              }}
+                              className={`h-8 px-3 rounded-lg border text-[12px] font-medium transition-colors ${
+                                (creativeType === 'video' ? creativeVideoModel : creativeType === 'edit' ? getCanvaEditToolLabel(selectedEditTool) : creativeImageModel) === option
+                                  ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
+                                  : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          ))}
                         </div>
                       </div>
 
-                      <div className="mt-4">
-                        <p className="text-[10px] font-medium text-[#999]">画质选择</p>
-                        <div className="mt-2 grid grid-cols-2 gap-1.5">
-                          {CREATIVE_QUALITY_OPTIONS.map(quality => {
-                            const isActive = creativeQuality === quality;
-                            return (
-                              <button
-                                key={quality}
-                                onClick={() => {
-                                  setCreativeQuality(quality);
-                                  setShowCreativeOutputMenu(false);
-                                }}
-                                className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
-                                  isActive
-                                    ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
-                                    : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
-                                }`}
-                              >
-                                {quality}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
+                      {creativeType !== 'edit' && (
+                        <>
+                          <div className="mt-4">
+                            <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
+                              <Monitor size={11} />
+                              <span>{creativeType === 'video' ? '画幅比例' : '图片比例'}</span>
+                            </div>
+                            <div className="mt-2 grid grid-cols-4 gap-1.5">
+                              {CANVA_RATIO_OPTIONS.map((ratio) => {
+                                const isActive = creativeType === 'video' ? creativeVideoRatio === ratio : creativeImageRatio === ratio;
+                                return (
+                                  <button
+                                    key={ratio}
+                                    onClick={() => {
+                                      if (creativeType === 'video') setCreativeVideoRatio(ratio);
+                                      else setCreativeImageRatio(ratio);
+                                    }}
+                                    className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
+                                      isActive
+                                        ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
+                                        : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
+                                    }`}
+                                  >
+                                    {ratio}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {creativeType === 'video' ? (
+                            <>
+                              <div className="mt-4">
+                                <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
+                                  <Image size={11} />
+                                  <span>镜头控制</span>
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                                  {CANVA_VIDEO_FRAME_OPTIONS.map((option) => (
+                                    <button
+                                      key={option}
+                                      onClick={() => setCreativeVideoFrameMode(option)}
+                                      className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
+                                        creativeVideoFrameMode === option
+                                          ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
+                                          : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
+                                      }`}
+                                    >
+                                      {option}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="mt-4">
+                                <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
+                                  <Clock size={11} />
+                                  <span>时长</span>
+                                </div>
+                                <div className="mt-2 grid grid-cols-4 gap-1.5">
+                                  {CANVA_VIDEO_DURATION_OPTIONS.map((duration) => (
+                                    <button
+                                      key={duration}
+                                      onClick={() => setCreativeVideoDuration(duration)}
+                                      className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
+                                        creativeVideoDuration === duration
+                                          ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
+                                          : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
+                                      }`}
+                                    >
+                                      {duration}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="mt-4">
+                              <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
+                                <Sparkles size={11} />
+                                <span>清晰度</span>
+                              </div>
+                              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                                {CANVA_IMAGE_QUALITY_OPTIONS.map((quality) => (
+                                  <button
+                                    key={quality}
+                                    onClick={() => setCreativeQuality(quality)}
+                                    className={`h-8 rounded-lg border text-[12px] font-medium transition-colors ${
+                                      creativeQuality === quality
+                                        ? 'border-[#c7d9ff] bg-[#f0f5ff] text-[#1476ff]'
+                                        : 'border-[#e5e7eb] bg-[#ffffff] text-[#555] hover:bg-[#f8fafc]'
+                                    }`}
+                                  >
+                                    {quality}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -3873,14 +6198,15 @@ function ChatComposer({
               <button
                 onClick={() => {
                   setShowResearchMenu(v => !v);
+                  setShowInsightSubMenu(false);
                   setShowDesignMenu(false);
                   setShowDemoSpecMenu(false);
                   setShowCreativeMediaMenu(false);
                   setShowCreativeOutputMenu(false);
                 }}
-                className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+                className="flex items-center gap-1 h-8 px-2 rounded-xl text-[12px] text-[#191919] bg-[rgba(44,46,52,0.05)] hover:bg-[rgba(44,46,52,0.08)] transition-colors"
               >
-                <span>{researchOption}</span>
+                <span>{researchOption === '访谈观点洞察' ? `访谈观点洞察/${insightSubOption}` : researchOption}</span>
                 <ChevronDown size={10} />
               </button>
               <AnimatePresence>
@@ -3890,19 +6216,56 @@ function ChatComposer({
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 4 }}
                     transition={{ duration: 0.12 }}
-                    className="absolute bottom-full left-0 mb-1 w-[140px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-[220]"
+                    className="absolute bottom-full left-0 mb-1 w-[160px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] z-[220]"
                   >
                     {RESEARCH_OPTIONS.map(opt => (
-                      <button
+                      <div
                         key={opt}
-                        onClick={() => {
-                          setResearchOption(opt);
-                          setShowResearchMenu(false);
+                        className="relative"
+                        onMouseEnter={() => {
+                          if (opt === '访谈观点洞察') setShowInsightSubMenu(true);
                         }}
-                        className={`w-full text-left px-3 py-2 text-[12px] transition-colors ${researchOption === opt ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
+                        onMouseLeave={() => {
+                          if (opt === '访谈观点洞察') setShowInsightSubMenu(false);
+                        }}
                       >
-                        {opt}
-                      </button>
+                        <button
+                          onClick={() => {
+                            setResearchOption(opt);
+                            if (opt !== '访谈观点洞察') setShowResearchMenu(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 text-[12px] transition-colors flex items-center justify-between ${researchOption === opt ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
+                        >
+                          <span>{opt}</span>
+                          {opt === '访谈观点洞察' && <ChevronRight size={10} className="text-[#999]" />}
+                        </button>
+                        {opt === '访谈观点洞察' && showInsightSubMenu && (
+                          <motion.div
+                            initial={{ opacity: 0, x: -4 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -4 }}
+                            transition={{ duration: 0.1 }}
+                            className="absolute left-full top-0 w-[140px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-[220]"
+                            onMouseEnter={() => setShowInsightSubMenu(true)}
+                            onMouseLeave={() => setShowInsightSubMenu(false)}
+                          >
+                            {INSIGHT_SUB_OPTIONS.map(sub => (
+                              <button
+                                key={sub}
+                                onClick={() => {
+                                  setInsightSubOption(sub);
+                                  setResearchOption('访谈观点洞察');
+                                  setShowInsightSubMenu(false);
+                                  setShowResearchMenu(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[12px] transition-colors ${insightSubOption === sub ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
+                              >
+                                {sub}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </div>
                     ))}
                   </motion.div>
                 )}
@@ -3919,7 +6282,7 @@ function ChatComposer({
                   setShowCreativeMediaMenu(false);
                   setShowCreativeOutputMenu(false);
                 }}
-                className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] text-[#191919] hover:bg-[#f5f5f5] transition-colors"
+                className="flex items-center gap-1 h-8 px-2 rounded-xl text-[12px] text-[#191919] bg-[rgba(44,46,52,0.05)] hover:bg-[rgba(44,46,52,0.08)] transition-colors"
               >
                 <span>{designOption}</span>
                 <ChevronDown size={10} />
@@ -3945,6 +6308,68 @@ function ChatComposer({
                         {opt}
                       </button>
                     ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+          {agent === 'demo' && (
+            <div className="relative shrink-0 z-[60]" ref={demoSpecMenuRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDemoSpecMenu((v) => !v);
+                  setShowResearchMenu(false);
+                  setShowDesignMenu(false);
+                  setShowCreativeMediaMenu(false);
+                  setShowCreativeMoreMenu(false);
+                }}
+                className={`flex items-center gap-1.5 h-8 px-2.5 rounded-xl text-[12px] transition-colors ${
+                  selectedPrototypeComponents.length > 0
+                    ? 'bg-[#eff6ff] text-[#1476ff]'
+                    : 'text-[#191919] bg-[rgba(44,46,52,0.05)] hover:bg-[rgba(44,46,52,0.08)]'
+                }`}
+              >
+                <Box size={12} />
+                <span>{prototypeSelectorLabel}</span>
+                <ChevronDown size={10} />
+              </button>
+              <AnimatePresence>
+                {showDemoSpecMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-full left-0 mb-1 w-[280px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-[220]"
+                  >
+                    {linkedPrototypeComponents.length ? (
+                      <div className="max-h-[260px] overflow-y-auto py-1.5">
+                        {linkedPrototypeComponents.map((component) => {
+                          const selected = selectedPrototypeComponentIds.includes(component.id);
+                          return (
+                            <button
+                              key={component.id}
+                              type="button"
+                              onClick={() => onTogglePrototypeComponent(component.id)}
+                              className={`w-full px-3 py-2.5 text-left transition-colors ${
+                                selected ? 'bg-[#f0f5ff] text-[#1476ff]' : 'text-[#333] hover:bg-[#f8fafc]'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-[12px] font-medium truncate">{component.name}</div>
+                                  <div className="text-[10px] text-[#8a8a8a] mt-[2px] truncate">{component.domainLabel}</div>
+                                </div>
+                                {selected && <Check size={12} className="shrink-0 text-[#1476ff]" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-4 text-[12px] text-[#999]">先去资产库的原型开发里启用组件</div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -4056,7 +6481,7 @@ function ChatComposer({
                       className={`w-full text-left px-3 py-2 text-[12px] transition-colors flex items-center justify-between gap-2 ${agent === opt.id ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
                     >
                       <span className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-md bg-[#eff6ff] text-[#1476ff] flex items-center justify-center">{opt.icon}</span>
+                        <span className={`w-5 h-5 rounded-md flex items-center justify-center ${agent === opt.id ? 'bg-[#eff6ff] text-[#1476ff]' : 'bg-[rgba(44,46,52,0.06)] text-[#555]'}`}>{opt.icon}</span>
                         {opt.label}
                       </span>
                       {agent === opt.id && <Check size={10} className="text-[#1476ff] shrink-0" />}
@@ -4065,32 +6490,6 @@ function ChatComposer({
                 </motion.div>
               )}
             </AnimatePresence>
-
-              <AnimatePresence>
-                {showDemoSpecMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    transition={{ duration: 0.12 }}
-                    className="absolute bottom-full right-0 mb-1 w-[176px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] overflow-hidden z-50"
-                  >
-                    {DEMO_SPEC_OPTIONS.map(spec => (
-                      <button
-                        key={spec}
-                        onClick={() => {
-                          setDemoSpec(spec);
-                          setShowDemoSpecMenu(false);
-                        }}
-                        className={`w-full text-left px-3 py-2 text-[12px] transition-colors ${demoSpec === spec ? 'text-[#1476ff] bg-[#f0f5ff]' : 'text-[#333] hover:bg-[#f8fafc]'}`}
-                      >
-                        {spec}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
           <AnimatePresence>
             {showSkillManagementModal && (
               <motion.div
@@ -4506,6 +6905,7 @@ function ChatComposer({
           {/* Fixed send button on the right */}
           <button
             onClick={handleSubmit}
+            title={needsUpload ? (researchOption === '评估问题整理' ? '请先上传评估任务书和逐字稿' : '请先上传访谈逐字稿和大纲') : undefined}
             className={`absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors z-20 ${canSend ? 'bg-[#1476ff] text-white hover:bg-[#1060d0] shadow-[0_2px_6px_rgba(20,118,255,0.3)]' : 'bg-[#f0f0f0] text-[#ccc] cursor-default'}`}
           >
             <Send size={12} />
@@ -4522,31 +6922,43 @@ function ChatPanel({
   deliverables,
   msgs,
   liveWorkflow,
+  canvaState,
   onMsgsChange,
   onWorkflowActivated,
   onWorkflowReady,
   onStartConversation,
+  onCanvaStateChange,
   onFileOpen,
   onBack,
   title,
   figmaData,
   onFigmaData,
   onGeneratedHtml,
+  buildDemoPrompt,
+  linkedPrototypeComponents,
+  selectedPrototypeComponentIds,
+  onTogglePrototypeComponent,
 }: {
   activeWorkflow: WorkflowType | null;
   deliverables: WorkflowType[];
   msgs: ChatMsg[];
   liveWorkflow: { wf: WorkflowType; prompt: string } | null;
+  canvaState?: CanvaState | null;
   onMsgsChange: (msgs: ChatMsg[] | ((prev: ChatMsg[]) => ChatMsg[])) => void;
   onWorkflowActivated: (wf: WorkflowType, isNew: boolean) => void;
   onWorkflowReady: (wf: WorkflowType) => void;
   onStartConversation: (msg: string, wf: WorkflowType) => void;
+  onCanvaStateChange: (state: CanvaState | null) => void;
   onFileOpen?: (wf: WorkflowType) => void;
   onBack?: () => void;
   title?: string;
   figmaData?: FigmaDesignData | null;
   onFigmaData?: (data: FigmaDesignData | null) => void;
   onGeneratedHtml?: (html: string) => void;
+  buildDemoPrompt: (prompt: string) => string;
+  linkedPrototypeComponents: LinkedPrototypeComponent[];
+  selectedPrototypeComponentIds: string[];
+  onTogglePrototypeComponent: (componentId: string) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<ComposerMode>('auto');
@@ -4590,7 +7002,16 @@ function ChatPanel({
     // ── Mock path for other workflows ──────────────────────────────────────
     const resp = generateAIResponse(liveWorkflow.wf, liveWorkflow.prompt);
 
-    updateMsgs(prev => [...prev, { id: aiId, role: 'ai', text: '…', thinkingDone: false, thinkingLines: [] }]);
+    const liveArtifact = liveWorkflow.wf === 'creative' ? getCanvaArtifactMeta(canvaState) : null;
+    updateMsgs(prev => [...prev, {
+      id: aiId,
+      role: 'ai',
+      text: '…',
+      thinkingDone: false,
+      thinkingLines: [],
+      artifactLabel: liveArtifact?.label,
+      artifactMeta: liveArtifact?.meta,
+    }]);
 
     resp.thinkingLines.forEach((line, i) => {
       const tid = window.setTimeout(() => {
@@ -4604,7 +7025,16 @@ function ChatPanel({
     const doneAt = 700 * (resp.thinkingLines.length + 1);
     const doneTid = window.setTimeout(() => {
       updateMsgs(prev => prev.map(m =>
-        m.id === aiId ? { ...m, text: resp.text, thinkingDone: true, canvasType: resp.canvasType } : m
+        m.id === aiId
+          ? {
+              ...m,
+              text: resp.text,
+              thinkingDone: true,
+              canvasType: resp.canvasType,
+              artifactLabel: liveArtifact?.label,
+              artifactMeta: liveArtifact?.meta,
+            }
+          : m
       ));
       onWorkflowReadyRef.current(liveWorkflow.wf);
     }, doneAt);
@@ -4614,7 +7044,7 @@ function ChatPanel({
       timeoutsRef.current.forEach(id => window.clearTimeout(id));
       timeoutsRef.current = [];
     };
-  }, [liveWorkflow, updateMsgs]);
+  }, [canvaState, liveWorkflow, updateMsgs]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -4696,13 +7126,115 @@ function ChatPanel({
           ? 'research'
           : mode;
 
+    const targetWf = options?.researchWf
+      ?? (options?.insightSubOption ? INSIGHT_SUB_TO_WF[options.insightSubOption] : null)
+      ?? resolvedMode;
+
+    const resolvedCreativePayload = resolvedMode === 'creative'
+      ? (options?.creativePayload ?? {
+        mode: canvaState?.mode ?? 'image',
+        prompt: content,
+        imageModel: canvaState?.imageModel ?? DEFAULT_CANVA_STATE.imageModel,
+        imageRatio: canvaState?.imageRatio ?? DEFAULT_CANVA_STATE.imageRatio,
+        imageQuality: canvaState?.imageQuality ?? DEFAULT_CANVA_STATE.imageQuality,
+        videoModel: canvaState?.videoModel ?? DEFAULT_CANVA_STATE.videoModel,
+        videoFrameMode: canvaState?.videoFrameMode ?? DEFAULT_CANVA_STATE.videoFrameMode,
+        videoRatio: canvaState?.videoRatio ?? DEFAULT_CANVA_STATE.videoRatio,
+        videoDuration: canvaState?.videoDuration ?? DEFAULT_CANVA_STATE.videoDuration,
+        editTool: canvaState?.editTool,
+        attachmentNames: [],
+        referenceImageName: canvaState?.referenceImageName ?? null,
+        firstFrameName: canvaState?.firstFrameName ?? null,
+        lastFrameName: canvaState?.lastFrameName ?? null,
+        requiresUpload: false,
+      })
+      : null;
+    const generationPrompt = resolvedMode === 'demo' ? buildDemoPrompt(content) : content;
+
+    if (resolvedMode === 'creative' && resolvedCreativePayload) {
+      const wf: WorkflowType = 'creative';
+      const isNew = !deliverables.includes(wf);
+      onWorkflowActivated(wf, isNew);
+      const payload = resolvedCreativePayload;
+      const nextCanvaState = buildCanvaState(payload);
+      const artifact = getCanvaArtifactMeta(nextCanvaState);
+      const userId = `u-${Date.now()}`;
+      const aiId = `a-${Date.now()}`;
+
+      onCanvaStateChange(nextCanvaState);
+
+      if (payload.requiresUpload) {
+        updateMsgs(prev => [
+          ...prev,
+          { id: userId, role: 'user', text: content },
+          {
+            id: aiId,
+            role: 'ai',
+            text: getCanvaReplyText(payload),
+            thinkingDone: true,
+            canvasType: wf,
+            artifactLabel: artifact.label,
+            artifactMeta: artifact.meta,
+            isUpdate: msgs.length > 0,
+          },
+        ]);
+        onWorkflowReadyRef.current(wf);
+        return;
+      }
+
+      const thinkingLines = getCanvaThinkingLines(payload);
+      updateMsgs(prev => [
+        ...prev,
+        { id: userId, role: 'user', text: content },
+        {
+          id: aiId,
+          role: 'ai',
+          text: '正在生成…',
+          thinkingDone: false,
+          thinkingLines: [],
+          isUpdate: msgs.length > 0,
+          artifactLabel: artifact.label,
+          artifactMeta: artifact.meta,
+        },
+      ]);
+
+      thinkingLines.forEach((line, i) => {
+        const tid = window.setTimeout(() => {
+          updateMsgs(prev => prev.map(m =>
+            m.id === aiId ? { ...m, thinkingLines: thinkingLines.slice(0, i + 1) } : m
+          ));
+        }, 560 * (i + 1));
+        timeoutsRef.current.push(tid);
+      });
+
+      const doneTid = window.setTimeout(() => {
+        const isImageMode = payload.mode === 'image';
+        updateMsgs(prev => prev.map(m =>
+          m.id === aiId
+            ? {
+                ...m,
+                text: getCanvaReplyText(payload),
+                thinkingDone: true,
+                canvasType: wf,
+                artifactLabel: artifact.label,
+                artifactMeta: artifact.meta,
+                imageOptions: isImageMode ? [canvas1, canvasCase2, canvas3, codingCase] : undefined,
+              }
+            : m
+        ));
+        if (!isImageMode) onWorkflowReadyRef.current(wf);
+      }, 560 * (thinkingLines.length + 1));
+      timeoutsRef.current.push(doneTid);
+      return;
+    }
+
     if (msgs.length === 0) {
-      onStartConversation(content, resolvedMode);
+      onStartConversation(content, targetWf);
       return;
     }
 
     // Follow-up message
-    const wf = resolvedMode;
+    const wf = targetWf;
     const isNew = !deliverables.includes(wf);
     onWorkflowActivated(wf, isNew);
 
@@ -4716,7 +7248,7 @@ function ChatPanel({
         { id: userId, role: 'user', text: content },
         { id: aiId, role: 'ai', text: '正在分析需求...', thinkingDone: false, thinkingLines: [], isUpdate: true, canvasType: wf },
       ]);
-      void runRealAiDemo(content, wf, aiId);
+      void runRealAiDemo(generationPrompt, wf, aiId);
       return;
     }
 
@@ -4746,9 +7278,7 @@ function ChatPanel({
       onWorkflowReadyRef.current(wf);
     }, doneAt);
     timeoutsRef.current.push(doneTid);
-  }, [draft, mode, msgs.length, deliverables, onStartConversation, onWorkflowActivated, updateMsgs, runRealAiDemo]);
-
-  const meta = activeWorkflow ? WORKFLOW_META[activeWorkflow] : null;
+  }, [draft, mode, figmaData, deliverables, onWorkflowActivated, onStartConversation, onCanvaStateChange, msgs.length, runRealAiDemo, updateMsgs, canvaState, buildDemoPrompt]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-transparent">
@@ -4799,31 +7329,63 @@ function ChatPanel({
                       )}
                       <div>
                         <p className="text-[14px] text-[#333] leading-[20px] whitespace-pre-wrap"><StreamedText text={msg.text} msgId={msg.id} /></p>
-                        {msg.canvasType && (() => {
+                        {msg.imageOptions && msg.imageOptions.length > 0 && (
+                          <div className="mt-3">
+                            <div className="grid grid-cols-2 gap-1.5 mb-3">
+                              {msg.imageOptions.map((src, i) => (
+                                <div
+                                  key={i}
+                                  className="relative aspect-[4/3] rounded-xl overflow-hidden cursor-pointer"
+                                  onClick={() => onFileOpen?.(msg.canvasType!)}
+                                >
+                                  <img
+                                    src={src}
+                                    alt={`方案${String.fromCharCode(65 + i)}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <div className="absolute bottom-0 left-0 right-0 px-2.5 py-1.5 bg-gradient-to-t from-black/60 to-transparent">
+                                    <span className="text-white text-[12px] font-medium">方案{String.fromCharCode(65 + i)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => onFileOpen?.(msg.canvasType!)}
+                              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full text-[13px] font-medium transition-colors hover:opacity-90 active:scale-[0.98]"
+                              style={{ background: 'linear-gradient(135deg, #c4b5fd 0%, #a78bfa 100%)', color: '#fff' }}
+                            >
+                              查看图片生成结果
+                              <ChevronRight size={15} />
+                            </button>
+                          </div>
+                        )}
+                        {!msg.imageOptions && msg.canvasType && (() => {
                           const art = WORKFLOW_ARTIFACTS[msg.canvasType];
                           const ArtIcon = art.Icon;
+                          const now = new Date();
+                          const dateStr = `${now.getFullYear()}.${now.getMonth() + 1}.${now.getDate()}`;
                           return (
-                            <div onClick={() => onFileOpen?.(msg.canvasType!)} className="mt-3 w-full border border-[#e2e2e2] rounded-xl p-[17px] hover:border-[#c7d9ff] hover:shadow-sm transition-colors group cursor-pointer bg-white flex flex-col gap-[16px]">
-                              <div className="flex flex-col gap-[12px]">
-                                <div
-                                  className="inline-flex items-center gap-[4px] px-[12px] py-[6px] rounded-[8px] self-start"
-                                  style={{ backgroundColor: art.iconBg }}
-                                >
-                                  <ArtIcon size={10} style={{ color: art.iconColor }} />
-                                  <span className="text-[12px] font-medium" style={{ color: art.iconColor }}>{art.badge}</span>
+                            <div
+                              onClick={() => onFileOpen?.(msg.canvasType!)}
+                              className="mt-3 w-full border border-[#e2e2e2] rounded-xl p-[21px] cursor-pointer transition-colors hover:border-[#c7d9ff] hover:shadow-sm flex items-center gap-4"
+                              style={{ background: `linear-gradient(to right, ${art.iconBg}, #ffffff)` }}
+                            >
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                                style={{ backgroundColor: art.iconBg }}
+                              >
+                                <ArtIcon size={15} style={{ color: art.iconColor }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[14px] font-semibold text-[#191919] leading-normal truncate">{msg.artifactLabel ?? art.label}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[12px] text-[rgba(25,25,25,0.6)] leading-[15px]">{msg.artifactMeta ?? art.meta}</span>
+                                  <span className="text-[12px] text-[rgba(25,25,25,0.6)] leading-[15px]">{dateStr}</span>
                                 </div>
-                                <div className="flex flex-col gap-[8px]">
-                                  <p className="text-[14px] font-semibold text-[#191919] leading-normal">{art.label}</p>
-                                  <p className="text-[12px] text-[rgba(25,25,25,0.6)] leading-[15px]">{art.meta}</p>
-                                </div>
                               </div>
-                              <div className="flex items-center justify-center gap-[2px] bg-[rgba(223,223,223,0.3)] rounded-[8px] px-[12px] py-[6px]">
-                                <span className="text-[12px] font-medium text-[#191919]">查看详情</span>
-                                <ChevronRight size={16} className="text-[#191919]" />
-                              </div>
-                              </div>
-                            );
-                          })()}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </>
                   ) : null}
@@ -4906,6 +7468,9 @@ function ChatPanel({
         setMode={setMode}
         figmaData={figmaData}
         onFigmaData={onFigmaData}
+        linkedPrototypeComponents={linkedPrototypeComponents}
+        selectedPrototypeComponentIds={selectedPrototypeComponentIds}
+        onTogglePrototypeComponent={onTogglePrototypeComponent}
       />
     </div>
   );
@@ -4929,6 +7494,9 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowType | null>(initialState?.activeWorkflow ?? null);
   const [readyWorkflows, setReadyWorkflows] = useState<WorkflowType[]>(initialState?.readyWorkflows ?? []);
   const [msgs, setMsgs] = useState<ChatMsg[]>(initialState?.msgs ?? []);
+  const [canvaState, setCanvaState] = useState<CanvaState | null>(initialState?.canvaState ?? null);
+  const [linkedPrototypeComponents, setLinkedPrototypeComponents] = useState<LinkedPrototypeComponent[]>(loadEnabledPrototypeComponents);
+  const [selectedPrototypeComponentIds, setSelectedPrototypeComponentIds] = useState<string[]>([]);
   const [liveWorkflow, setLiveWorkflow] = useState<{ wf: WorkflowType; prompt: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [chatPanelWidth, setChatPanelWidth] = useState(400);
@@ -4967,6 +7535,21 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
   }, []);
 
   useEffect(() => {
+    const syncPrototypeComponents = () => {
+      const nextComponents = loadEnabledPrototypeComponents();
+      setLinkedPrototypeComponents(nextComponents);
+      setSelectedPrototypeComponentIds((prev) => prev.filter((id) => nextComponents.some((component) => component.id === id)));
+    };
+
+    window.addEventListener(PROTOTYPE_COMPONENT_LINKS_UPDATED_EVENT, syncPrototypeComponents as EventListener);
+    window.addEventListener('storage', syncPrototypeComponents);
+    return () => {
+      window.removeEventListener(PROTOTYPE_COMPONENT_LINKS_UPDATED_EVENT, syncPrototypeComponents as EventListener);
+      window.removeEventListener('storage', syncPrototypeComponents);
+    };
+  }, []);
+
+  useEffect(() => {
     if (workspaceId === undefined) return;
     if (prevWorkspaceIdRef.current === workspaceId) return;
 
@@ -4980,6 +7563,8 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
     setActiveWorkflow(initialState?.activeWorkflow ?? null);
     setReadyWorkflows(initialState?.readyWorkflows ?? []);
     setMsgs(initialState?.msgs ?? []);
+    setCanvaState(initialState?.canvaState ?? null);
+    setSelectedPrototypeComponentIds([]);
     setLiveWorkflow(null);
     setFigmaData(null);
     setGeneratedHtml(null);
@@ -5047,7 +7632,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
 
       deliverables.forEach((wf) => {
         const hasCompletedCanvas = msgs.some((msg) => {
-          return msg.role === 'ai' && msg.thinkingDone && msg.canvasType === wf;
+          return msg.role === 'ai' && msg.thinkingDone && msg.canvasType === wf && !msg.imageOptions;
         });
         if (hasCompletedCanvas) nextSet.add(wf);
       });
@@ -5070,14 +7655,82 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
   }, []);
 
+  const selectedPrototypeComponents = useMemo(
+    () => linkedPrototypeComponents.filter((component) => selectedPrototypeComponentIds.includes(component.id)),
+    [linkedPrototypeComponents, selectedPrototypeComponentIds],
+  );
+
+  const buildDemoPrompt = useCallback(
+    (prompt: string) => prompt,
+    [],
+  );
+
   const startConversation = useCallback((msg: string, wf: WorkflowType) => {
     const isNew = !deliverables.includes(wf);
     if (isNew) setDeliverables(prev => [...prev, wf]);
     setReadyWorkflows(prev => prev.filter(w => w !== wf));
     setActiveWorkflow(wf);
     setMsgs([{ id: `u-${Date.now()}`, role: 'user', text: msg }]);
-    setLiveWorkflow({ wf, prompt: msg });
-  }, [deliverables]);
+    if (wf === 'creative') {
+      setCanvaState({
+        ...DEFAULT_CANVA_STATE,
+        prompt: msg,
+        status: 'ready',
+        updatedAt: Date.now(),
+      });
+    }
+    setLiveWorkflow({ wf, prompt: wf === 'demo' ? buildDemoPrompt(msg) : msg });
+  }, [buildDemoPrompt, deliverables]);
+
+  const handleTogglePrototypeComponent = useCallback((componentId: string) => {
+    setSelectedPrototypeComponentIds((prev) =>
+      prev[0] === componentId ? [] : [componentId],
+    );
+  }, []);
+
+  const buildCurrentArtifactPayload = useCallback((workflow: WorkflowType) => {
+    const meta = getWorkflowMetaForState(workflow, canvaState);
+    const latestAiMessage = [...msgs].reverse().find((msg) =>
+      msg.role === 'ai' && msg.thinkingDone && msg.canvasType === workflow,
+    );
+
+    let content = latestAiMessage?.text ?? `# ${meta.fileLabel}\n\n${meta.workspaceLabel}`;
+    if (workflow === 'demo' && generatedHtml) {
+      content = generatedHtml;
+    } else if (workflow === 'creative') {
+      content = [
+        `# ${meta.fileLabel}`,
+        '',
+        canvaState?.prompt ? `提示词：${canvaState.prompt}` : '',
+        latestAiMessage?.text ?? '创意结果已生成。',
+      ].filter(Boolean).join('\n');
+    } else if (workflow !== 'demo') {
+      content = [`# ${meta.fileLabel}`, '', latestAiMessage?.text ?? meta.workspaceLabel].join('\n');
+    }
+
+    return {
+      workflow: workflow as ArtifactWorkflowKey,
+      title: meta.fileLabel,
+      subtitle: meta.fileExt,
+      content,
+    };
+  }, [canvaState, generatedHtml, msgs]);
+
+  const handleSaveActiveArtifact = useCallback(() => {
+    if (!activeWorkflow) return;
+    const artifact = buildCurrentArtifactPayload(activeWorkflow);
+    appendGeneratedArtifactToProjectAssets(artifact.workflow, artifact.title, artifact.content);
+    showToast(`已保存至项目资产：${artifact.title}`);
+  }, [activeWorkflow, buildCurrentArtifactPayload, showToast]);
+
+  const handleCreateShareLink = useCallback(() => {
+    if (!activeWorkflow) return null;
+    const artifact = buildCurrentArtifactPayload(activeWorkflow);
+    const result = createSharedArtifact(artifact);
+    if (!result) return null;
+    showToast('已生成分享链接');
+    return result.url;
+  }, [activeWorkflow, buildCurrentArtifactPayload, showToast]);
 
   const handleWorkflowActivated = useCallback((wf: WorkflowType, isNew: boolean) => {
     if (isNew) setDeliverables(prev => [...prev, wf]);
@@ -5094,6 +7747,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
   const handleTabClose = useCallback((wf: WorkflowType) => {
     setDeliverables(prev => prev.filter(w => w !== wf));
     setReadyWorkflows(prev => prev.filter(w => w !== wf));
+    if (wf === 'creative') setCanvaState(null);
     if (activeWorkflow === wf) setActiveWorkflow(null);
   }, [activeWorkflow]);
 
@@ -5108,6 +7762,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
     setActiveWorkflow(null);
     setReadyWorkflows([]);
     setMsgs([]);
+    setCanvaState(null);
     setLiveWorkflow(null);
     setGeneratedHtml(null);
     setFigmaData(null);
@@ -5128,8 +7783,8 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
 
   useEffect(() => {
     if (isHydratingWorkspaceRef.current) return;
-    onStateChange?.({ deliverables, activeWorkflow, readyWorkflows, msgs });
-  }, [deliverables, activeWorkflow, readyWorkflows, msgs, onStateChange]);
+    onStateChange?.({ deliverables, activeWorkflow, readyWorkflows, msgs, canvaState });
+  }, [deliverables, activeWorkflow, readyWorkflows, msgs, canvaState, onStateChange, selectedPrototypeComponentIds]);
 
   return (
     <motion.div
@@ -5149,18 +7804,24 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
           deliverables={deliverables}
           msgs={msgs}
           liveWorkflow={liveWorkflow}
+          canvaState={canvaState}
           onMsgsChange={(msgsOrUpdater) => {
             setMsgs(prev => typeof msgsOrUpdater === 'function' ? msgsOrUpdater(prev) : msgsOrUpdater);
           }}
           onWorkflowActivated={handleWorkflowActivated}
           onWorkflowReady={handleWorkflowReady}
           onStartConversation={startConversation}
+          onCanvaStateChange={setCanvaState}
           onFileOpen={handleFileOpen}
           onBack={onBack}
           title={title}
           figmaData={figmaData}
           onFigmaData={setFigmaData}
           onGeneratedHtml={setGeneratedHtml}
+          buildDemoPrompt={buildDemoPrompt}
+          linkedPrototypeComponents={linkedPrototypeComponents}
+          selectedPrototypeComponentIds={selectedPrototypeComponentIds}
+          onTogglePrototypeComponent={handleTogglePrototypeComponent}
         />
       </div>
 
@@ -5189,6 +7850,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
           deliverables={deliverables}
           activeWorkflow={activeWorkflow}
           readyWorkflows={readyWorkflows}
+          canvaState={canvaState}
           onReset={handleReset}
           onTabSelect={setActiveWorkflow}
           onTabClose={handleTabClose}
@@ -5196,6 +7858,11 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
           onToast={showToast}
           generatedHtml={generatedHtml}
           onCopyAsDesign={handleCopyAsDesign}
+          onSaveToProjectAssets={handleSaveActiveArtifact}
+          onCreateShareLink={handleCreateShareLink}
+          linkedPrototypeComponents={linkedPrototypeComponents}
+          selectedPrototypeComponentIds={selectedPrototypeComponentIds}
+          onTogglePrototypeComponent={handleTogglePrototypeComponent}
         />
       </div>
 

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowLeft,
   BarChart2,
   Check,
   ChevronRight,
@@ -9,19 +11,21 @@ import {
   FolderOpen,
   Heart,
   LayoutGrid,
+  Lock,
   MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
   Settings,
+  Shield,
   Sparkles,
+  Upload,
   Users,
   Wand2,
   X,
   MessageSquarePlus,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'motion/react';
 import { OctoBuild, type OctoBuildState } from '../pages/OctoBuild';
 import {
   loadSkillMarketItems,
@@ -32,11 +36,13 @@ import {
   type SkillMarketItem,
 } from '../data/skill-market-data';
 import unionIcon from '../assets/icons/union.svg';
+import { AssetsPanel, type AssetTabKey } from '../features/assets/AssetsPanel';
 
 const KNOWLEDGE_MANAGEMENT_ICON_MASK_URL = 'https://www.figma.com/api/mcp/asset/866fcb9e-d7f0-4f57-a4b3-c341c6c37b84';
 const KNOWLEDGE_MANAGEMENT_ICON_FILL_URL = 'https://www.figma.com/api/mcp/asset/dbb0e47f-7de5-4caf-bb6f-f4b1c5395ee0';
 
 export type NavKey = 'chat' | 'skill_market' | 'knowledge_base';
+type SkillSource = 'platform' | 'personal';
 
 // ── Project Selection Types ─────────────────────────────────────────────────
 type Domain = '终端' | 'ICT' | '质量与流程IT' | '华为云' | '制造部' | 'EBG（UCD)' | 'GTS' | '2012实验室';
@@ -136,22 +142,315 @@ interface ConversationItem {
 interface KnowledgeItem {
   id: string;
   title: string;
-  group: '领域专业知识' | '团队知识';
+  group: '领域专业知识' | '团队知识' | '个人资产';
   type: 'doc' | 'report' | 'faq' | 'spec';
   size: string;
   updatedAt: number;
   snippet: string;
-  format?: 'pdf' | 'md' | 'txt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'ppt' | 'pptx' | 'json';
+  format?: 'pdf' | 'md' | 'txt' | 'doc' | 'docx' | 'xls' | 'xlsx' | 'ppt' | 'pptx' | 'json' | 'fig' | 'png';
   owner?: string;
   tags?: string[];
   content?: string;
+  source?: 'platform' | 'personal';
+  authority?: '强制' | '标准' | '参考';
+  reviewStatus?: '已审核' | '评审中';
+  applicableScenarios?: string[];
+  citationLabel?: string;
+  visibility?: 'private';
+  uploadSource?: 'cloud' | 'local';
+  riskNote?: string;
   sections: Array<{ title: string; content: string }>;
 }
 
-const KNOWLEDGE_GROUPS: Array<KnowledgeItem['group']> = ['领域专业知识', '团队知识'];
-const KNOWLEDGE_UPLOAD_ACCEPT = '.pdf,.md,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json';
+type PersonalSkillFileFormat = 'md' | 'txt' | 'json' | 'code';
+
+interface PersonalSkillFileNode {
+  id: string;
+  name: string;
+  type: 'file';
+  format: PersonalSkillFileFormat;
+  content: string;
+  updatedAt: number;
+}
+
+interface PersonalSkillFolderNode {
+  id: string;
+  name: string;
+  type: 'folder';
+  children: PersonalSkillNode[];
+}
+
+type PersonalSkillNode = PersonalSkillFileNode | PersonalSkillFolderNode;
+
+interface PersonalSkillPackage {
+  id: string;
+  name: string;
+  summary: string;
+  nodes: PersonalSkillNode[];
+  updatedAt: number;
+}
+
+function createPersonalSkillDocMarkdown(payload: {
+  title: string;
+  concept: string;
+  useCases: string[];
+  outputs: string[];
+  workflow: string[];
+  rules: string[];
+}): string {
+  return [
+    `# ${payload.title}`,
+    '',
+    '## 核心概念',
+    payload.concept,
+    '',
+    '## 适用场景',
+    ...payload.useCases.map((item) => `- ${item}`),
+    '',
+    '## 输出内容',
+    ...payload.outputs.map((item) => `- ${item}`),
+    '',
+    '## 推荐工作流',
+    ...payload.workflow.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    '## 使用规则',
+    ...payload.rules.map((item) => `- ${item}`),
+  ].join('\n');
+}
+
+const DEFAULT_PERSONAL_SKILL_PACKAGES: PersonalSkillPackage[] = [
+  {
+    id: 'ps-harmony',
+    name: '鸿蒙规范生成',
+    summary: '面向 HarmonyOS 场景的视觉与组件规范生成能力。',
+    updatedAt: 1744819200000,
+    nodes: [
+      {
+        id: 'ps-harmony-skill-md',
+        name: 'skill.md',
+        type: 'file',
+        format: 'md',
+        updatedAt: 1744819200000,
+        content: createPersonalSkillDocMarkdown({
+          title: '鸿蒙规范生成',
+          concept: '鸿蒙规范生成会基于 HarmonyOS 的组件约束、层级关系和交互反馈，快速给出符合系统语言的界面建议。它尤其适用于要做鸿蒙适配的产品团队，帮助在有限时间内把控系统一致性和生态感。',
+          useCases: [
+            '将现有产品快速适配到 HarmonyOS 视觉体系',
+            '生成符合鸿蒙组件规范的原型和页面草稿',
+            '检查导航结构、卡片样式和反馈机制是否符合生态风格',
+          ],
+          outputs: [
+            'HarmonyOS 风格页面建议',
+            '组件样式与状态规范说明',
+            '导航与布局适配建议',
+          ],
+          workflow: [
+            '识别页面类型与设备上下文',
+            '匹配 HarmonyOS 组件与视觉模式',
+            '生成页面框架、组件样式和反馈方案',
+            '输出适配说明与注意事项',
+          ],
+          rules: [
+            '默认优先采用系统原生交互和视觉表达',
+            '不主动引入与 HarmonyOS 风格冲突的品牌装饰',
+            '如有品牌色，会以系统兼容方式进行收敛',
+          ],
+        }),
+      },
+      {
+        id: 'ps-harmony-agent',
+        name: 'Agent',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-agent-system',
+            name: 'system-prompt.md',
+            type: 'file',
+            format: 'md',
+            updatedAt: 1744819200000,
+            content: [
+              '# Agent 角色说明',
+              '',
+              '## 目标',
+              '帮助团队把当前设计方案快速映射到 HarmonyOS 组件与交互语义。',
+              '',
+              '## 行为约束',
+              '- 优先输出系统一致性建议',
+              '- 对品牌化视觉做风险提示',
+              '- 提供组件替代方案与适配说明',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        id: 'ps-harmony-assets',
+        name: 'Assets',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-assets-tokens',
+            name: 'tokens.json',
+            type: 'file',
+            format: 'json',
+            updatedAt: 1744819200000,
+            content: JSON.stringify(
+              {
+                color: { primary: '#0A59F7', surface: '#F7F9FC', text: '#191919' },
+                radius: { card: 16, control: 12 },
+                spacing: { section: 32, item: 12 },
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      },
+      {
+        id: 'ps-harmony-eval',
+        name: 'eval-viewer',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-eval-readme',
+            name: 'README.md',
+            type: 'file',
+            format: 'md',
+            updatedAt: 1744819200000,
+            content: [
+              '# eval-viewer',
+              '',
+              '用于查看鸿蒙适配后的页面检查结果，包含组件映射、视觉偏差与交互风险说明。',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        id: 'ps-harmony-refs',
+        name: 'references',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-refs-guidelines',
+            name: 'harmony-guidelines.md',
+            type: 'file',
+            format: 'md',
+            updatedAt: 1744819200000,
+            content: [
+              '# HarmonyOS 适配指南',
+              '',
+              '- 导航优先使用系统模式',
+              '- 强反馈组件遵循系统动效时长',
+              '- 强品牌色需要经过兼容性收敛',
+            ].join('\n'),
+          },
+        ],
+      },
+      {
+        id: 'ps-harmony-agents',
+        name: 'Agents',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-agents-config',
+            name: 'agent-config.json',
+            type: 'file',
+            format: 'json',
+            updatedAt: 1744819200000,
+            content: JSON.stringify(
+              { fallback: 'system-default', target: 'HarmonyOS', mode: 'guided' },
+              null,
+              2,
+            ),
+          },
+        ],
+      },
+      {
+        id: 'ps-harmony-scripts',
+        name: 'Scripts',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-harmony-scripts-validate',
+            name: 'validate.ts',
+            type: 'file',
+            format: 'code',
+            updatedAt: 1744819200000,
+            content: [
+              'export function validateHarmonyMapping(input: string[]) {',
+              '  return input.filter(Boolean).map((item) => ({ item, status: "ok" }));',
+              '}',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'ps-research',
+    name: '研究方案设计',
+    summary: '把一个模糊的研究目标，整理成可直接执行的用户研究方案。',
+    updatedAt: 1744732800000,
+    nodes: [
+      {
+        id: 'ps-research-skill-md',
+        name: 'skill.md',
+        type: 'file',
+        format: 'md',
+        updatedAt: 1744732800000,
+        content: createPersonalSkillDocMarkdown({
+          title: '研究方案设计',
+          concept: '研究方案设计会围绕研究目标、目标人群和业务阶段，自动组合访谈、可用性测试、问卷、日志分析等方法，并形成完整的执行计划。',
+          useCases: [
+            '为新版本改版定义研究目标、对象和方法',
+            '补齐项目立项前的研究计划与时间安排',
+            '把零散需求整理为统一的研究执行框架',
+          ],
+          outputs: [
+            '研究目标与假设清单',
+            '样本招募策略与执行计划',
+            '访谈提纲 / 测试任务 / 分析框架',
+          ],
+          workflow: [
+            '识别业务问题与研究问题',
+            '匹配研究方法和样本规模',
+            '生成执行节奏、任务安排与产出模板',
+            '整理分析维度与洞察输出框架',
+          ],
+          rules: [
+            '优先输出可落地的轻量研究计划，而不是理论化模板',
+            '默认覆盖招募、执行、分析和汇报四个阶段',
+            '如果研究目标过大，会自动拆分为阶段性任务',
+          ],
+        }),
+      },
+      {
+        id: 'ps-research-assets',
+        name: 'Assets',
+        type: 'folder',
+        children: [
+          {
+            id: 'ps-research-assets-interview',
+            name: 'interview-outline.md',
+            type: 'file',
+            format: 'md',
+            updatedAt: 1744732800000,
+            content: [
+              '# 访谈提纲',
+              '',
+              '## 访谈目标',
+              '验证用户在新版本中的主要任务路径和关键疑虑。',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+  },
+];
+
+const KNOWLEDGE_GROUPS: Array<KnowledgeItem['group']> = ['领域专业知识', '团队知识', '个人资产'];
+const KNOWLEDGE_UPLOAD_ACCEPT = '.pdf,.md,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.fig,.png';
 const KNOWLEDGE_FORMATS: Array<NonNullable<KnowledgeItem['format']>> = [
-  'pdf', 'md', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'json',
+  'pdf', 'md', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'json', 'fig', 'png',
 ];
 
 const STORAGE_KEYS = {
@@ -160,6 +459,7 @@ const STORAGE_KEYS = {
   navWidth: 'octo.client.navWidth',
   conversations: 'octo.client.conversations',
   currentConversationId: 'octo.client.currentConversationId',
+  personalSkills: 'octo.client.personalSkills',
 } as const;
 
 const NAV_WIDTH_DEFAULT = 240;
@@ -425,7 +725,80 @@ export const DEFAULT_KNOWLEDGE: KnowledgeItem[] = [
       { title: '冲突处理', content: '优先按业务影响范围定级，再由对应 Owner 发起三方会快速决策。' },
     ],
   },
+  {
+    id: 'kb-p1',
+    title: '结算台改版交付稿',
+    source: 'personal',
+    group: '个人资产',
+    type: 'doc',
+    format: 'fig',
+    owner: '你',
+    visibility: 'private',
+    uploadSource: 'cloud',
+    authority: '参考',
+    applicableScenarios: ['当前项目迭代', '交付复用', '局部改版'],
+    citationLabel: '个人资产 · 结算台改版交付稿',
+    tags: ['交付稿', '结算台', '个人'],
+    size: '4.6 MB',
+    updatedAt: 1744389600000,
+    snippet: '当前项目的结算台交付稿，可继续作为页面结构、字段顺序和交互路径的上下文输入。',
+    riskNote: '该交付稿中的强调色与平台品牌色存在轻微差异，系统会保留来源提示。',
+    sections: [
+      { title: '资产说明', content: '这是你的云端交付件，主要用于后续结算流程、账单明细和确认路径的延续设计。' },
+      { title: '适用建议', content: '适合在同项目继续迭代时引用，优先复用字段顺序、摘要卡片和确认区布局。' },
+    ],
+  },
+  {
+    id: 'kb-p2',
+    title: 'B端深色看板探索稿',
+    source: 'personal',
+    group: '个人资产',
+    type: 'report',
+    format: 'png',
+    owner: '你',
+    visibility: 'private',
+    uploadSource: 'cloud',
+    authority: '参考',
+    applicableScenarios: ['视觉探索', '暗色模式', '方案比稿'],
+    citationLabel: '个人资产 · B端深色看板探索稿',
+    tags: ['探索稿', '深色', '看板'],
+    size: '2.1 MB',
+    updatedAt: 1744476000000,
+    snippet: '个人探索的深色控制台方向，适合用于比稿和风格尝试，不建议直接作为正式平台规范。',
+    riskNote: '探索稿使用的高饱和紫色不符合平台品牌色基线。',
+    sections: [
+      { title: '资产说明', content: '用于探索高密度信息看板在暗色主题下的视觉层级和卡片节奏。' },
+      { title: '适用建议', content: '适合概念提案与视觉探索，不建议直接覆盖平台正式规范。' },
+    ],
+  },
 ];
+
+function getKnowledgeSource(item: KnowledgeItem): 'platform' | 'personal' {
+  return item.source ?? (item.group === '个人资产' ? 'personal' : 'platform');
+}
+
+function getKnowledgeAuthority(item: KnowledgeItem): '强制' | '标准' | '参考' {
+  if (item.authority) return item.authority;
+  if (item.type === 'spec') return '标准';
+  if (item.type === 'doc') return '标准';
+  return '参考';
+}
+
+function getKnowledgeReviewStatus(item: KnowledgeItem): '已审核' | '评审中' {
+  return item.reviewStatus ?? '已审核';
+}
+
+function getKnowledgeScenarios(item: KnowledgeItem): string[] {
+  if (item.applicableScenarios?.length) return item.applicableScenarios;
+  if (item.type === 'spec') return ['规范对齐', '正式交付', '设计评审'];
+  if (item.type === 'report') return ['方案研究', '汇报准备', '洞察复用'];
+  if (item.type === 'faq') return ['问答参考', '知识复用', '方案澄清'];
+  return ['团队沉淀', '上下文补充', '交付复用'];
+}
+
+function getKnowledgeCitation(item: KnowledgeItem): string {
+  return item.citationLabel ?? `${getKnowledgeSource(item) === 'platform' ? '平台资产' : '个人资产'} · ${item.title}`;
+}
 
 // ── Image Gallery Mock Data ──────────────────────────────────────────────────
 interface GalleryImage {
@@ -747,6 +1120,255 @@ function formatKnowledgeDate(timestamp: number): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
+function loadPersonalSkillPackages(): PersonalSkillPackage[] {
+  const parsed = safeParse<PersonalSkillPackage[]>(safeStorageGet(STORAGE_KEYS.personalSkills), DEFAULT_PERSONAL_SKILL_PACKAGES);
+  return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_PERSONAL_SKILL_PACKAGES;
+}
+
+function savePersonalSkillPackages(items: PersonalSkillPackage[]) {
+  safeStorageSet(STORAGE_KEYS.personalSkills, JSON.stringify(items));
+}
+
+function findFirstPersonalSkillFile(nodes: PersonalSkillNode[]): PersonalSkillFileNode | null {
+  for (const node of nodes) {
+    if (node.type === 'file') return node;
+    const nested = findFirstPersonalSkillFile(node.children);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function findPersonalSkillNode(nodes: PersonalSkillNode[], nodeId: string): PersonalSkillNode | null {
+  for (const node of nodes) {
+    if (node.id === nodeId) return node;
+    if (node.type === 'folder') {
+      const nested = findPersonalSkillNode(node.children, nodeId);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function getPersonalFileFormat(name: string): PersonalSkillFileFormat {
+  const ext = name.split('.').pop()?.toLowerCase();
+  if (ext === 'md') return 'md';
+  if (ext === 'json') return 'json';
+  if (ext === 'txt') return 'txt';
+  return 'code';
+}
+
+function updatePersonalSkillNodeContent(nodes: PersonalSkillNode[], targetId: string, content: string, updatedAt: number): PersonalSkillNode[] {
+  return nodes.map((node) => {
+    if (node.type === 'file') {
+      return node.id === targetId ? { ...node, content, updatedAt } : node;
+    }
+    return {
+      ...node,
+      children: updatePersonalSkillNodeContent(node.children, targetId, content, updatedAt),
+    };
+  });
+}
+
+function createPersonalSkillPackageFromArchive(file: File): PersonalSkillPackage {
+  const createdAt = Date.now();
+  const packageName = file.name.replace(/\.zip$/i, '') || '导入技能';
+  const archiveLabel = `${file.name} · ${formatFileSize(file.size)} · ${formatTime(createdAt)}`;
+
+  return {
+    id: makeId('ps_pkg'),
+    name: packageName,
+    summary: '通过 zip 包导入的个人技能，可继续在当前工作区内补充和编辑。',
+    updatedAt: createdAt,
+    nodes: [
+      {
+        id: makeId('ps_file'),
+        name: 'skill.md',
+        type: 'file',
+        format: 'md',
+        updatedAt: createdAt,
+        content: [
+          `# ${packageName}`,
+          '',
+          '## 导入说明',
+          `该技能由压缩包导入：${archiveLabel}`,
+          '',
+          '## 当前状态',
+          '- 已在个人技能列表中创建根节点',
+          '- 已生成基础目录骨架',
+          '- 可继续补充说明文档、脚本和资源文件',
+          '',
+          '## 建议下一步',
+          '1. 在 Agent 目录补充 system prompt',
+          '2. 在 Assets 目录添加资源与配置',
+          '3. 在 Scripts 目录添加自动化脚本',
+        ].join('\n'),
+      },
+      {
+        id: makeId('ps_folder'),
+        name: 'Agent',
+        type: 'folder',
+        children: [
+          {
+            id: makeId('ps_file'),
+            name: 'README.md',
+            type: 'file',
+            format: 'md',
+            updatedAt: createdAt,
+            content: `# Agent\n\n${packageName} 的 Agent 目录，建议补充 system prompt 和运行说明。`,
+          },
+        ],
+      },
+      { id: makeId('ps_folder'), name: 'Assets', type: 'folder', children: [] },
+      { id: makeId('ps_folder'), name: 'eval-viewer', type: 'folder', children: [] },
+      { id: makeId('ps_folder'), name: 'references', type: 'folder', children: [] },
+      { id: makeId('ps_folder'), name: 'Agents', type: 'folder', children: [] },
+      { id: makeId('ps_folder'), name: 'Scripts', type: 'folder', children: [] },
+      {
+        id: makeId('ps_file'),
+        name: 'archive-info.txt',
+        type: 'file',
+        format: 'txt',
+        updatedAt: createdAt,
+        content: `source=${file.name}\nsize=${formatFileSize(file.size)}\nimportedAt=${formatTime(createdAt)}`,
+      },
+    ],
+  };
+}
+
+function filterPersonalSkillNodes(nodes: PersonalSkillNode[], query: string): PersonalSkillNode[] {
+  if (!query) return nodes;
+  const q = query.trim().toLowerCase();
+  return nodes.reduce<PersonalSkillNode[]>((acc, node) => {
+    if (node.type === 'file') {
+      const matches = node.name.toLowerCase().includes(q) || node.content.toLowerCase().includes(q);
+      if (matches) acc.push(node);
+      return acc;
+    }
+    const children = filterPersonalSkillNodes(node.children, query);
+    if (node.name.toLowerCase().includes(q) || children.length > 0) {
+      acc.push({ ...node, children });
+    }
+    return acc;
+  }, []);
+}
+
+function collectPersonalFolderIds(nodes: PersonalSkillNode[]): string[] {
+  return nodes.flatMap((node) => {
+    if (node.type !== 'folder') return [];
+    return [node.id, ...collectPersonalFolderIds(node.children)];
+  });
+}
+
+function renderPersonalSkillContent(content: string, format: PersonalSkillFileFormat): React.ReactNode {
+  if (format === 'json' || format === 'code') {
+    return (
+      <pre className="whitespace-pre-wrap break-words rounded-[12px] bg-[#fafbfd] px-[20px] py-[18px] text-[13px] leading-[22px] text-[#191919]">
+        {content}
+      </pre>
+    );
+  }
+
+  const lines = content.split('\n');
+  const blocks: Array<
+    | { type: 'h1'; text: string }
+    | { type: 'h2'; text: string }
+    | { type: 'p'; text: string }
+    | { type: 'ul'; items: string[] }
+    | { type: 'ol'; items: string[] }
+  > = [];
+
+  let paragraphBuffer: string[] = [];
+  let ulBuffer: string[] = [];
+  let olBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraphBuffer.length) return;
+    blocks.push({ type: 'p', text: paragraphBuffer.join(' ') });
+    paragraphBuffer = [];
+  };
+
+  const flushLists = () => {
+    if (ulBuffer.length) {
+      blocks.push({ type: 'ul', items: ulBuffer });
+      ulBuffer = [];
+    }
+    if (olBuffer.length) {
+      blocks.push({ type: 'ol', items: olBuffer });
+      olBuffer = [];
+    }
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushLists();
+      return;
+    }
+    if (line.startsWith('# ')) {
+      flushParagraph();
+      flushLists();
+      blocks.push({ type: 'h1', text: line.slice(2) });
+      return;
+    }
+    if (line.startsWith('## ')) {
+      flushParagraph();
+      flushLists();
+      blocks.push({ type: 'h2', text: line.slice(3) });
+      return;
+    }
+    if (line.startsWith('- ')) {
+      flushParagraph();
+      olBuffer = [];
+      ulBuffer.push(line.slice(2));
+      return;
+    }
+    if (/^\d+\.\s/.test(line)) {
+      flushParagraph();
+      ulBuffer = [];
+      olBuffer.push(line.replace(/^\d+\.\s/, ''));
+      return;
+    }
+    flushLists();
+    paragraphBuffer.push(line);
+  });
+
+  flushParagraph();
+  flushLists();
+
+  return blocks.map((block, index) => {
+    if (block.type === 'h1') {
+      return <h1 key={index} className="text-[28px] font-semibold leading-[40px] text-[#191919]">{block.text}</h1>;
+    }
+    if (block.type === 'h2') {
+      return <h2 key={index} className="mt-[28px] text-[16px] font-semibold leading-[24px] text-[#191919]">{block.text}</h2>;
+    }
+    if (block.type === 'p') {
+      return <p key={index} className="mt-[12px] text-[14px] leading-[28px] text-[rgba(25,25,25,0.88)]">{block.text}</p>;
+    }
+    if (block.type === 'ul') {
+      return (
+        <div key={index} className="mt-[12px] space-y-[4px]">
+          {block.items.map((item) => (
+            <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.88)]">
+              • {item}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div key={index} className="mt-[12px] space-y-[4px]">
+        {block.items.map((item, itemIndex) => (
+          <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.88)]">
+            {itemIndex + 1}. {item}
+          </div>
+        ))}
+      </div>
+    );
+  });
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -797,9 +1419,14 @@ function isWorkspaceStateEqual(a: OctoBuildState, b: OctoBuildState): boolean {
 }
 
 const NAV_ITEMS: Array<{ key: NavKey; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = [
-  { key: 'skill_market', label: '技能社区', icon: LayoutGrid },
-  { key: 'knowledge_base', label: '知识库', icon: FolderOpen },
+  { key: 'skill_market', label: '技能库', icon: LayoutGrid },
+  { key: 'knowledge_base', label: '资产库', icon: FolderOpen },
 ];
+
+const SKILL_SOURCE_LABEL: Record<SkillSource, string> = {
+  platform: '平台技能',
+  personal: '项目技能',
+};
 
 export interface PendingNav {
   nav: NavKey;
@@ -856,17 +1483,46 @@ export function ClientShell({
   const [knowledgeEnabledMap, setKnowledgeEnabledMap] = useState<Record<string, boolean>>(() => {
     return Object.fromEntries(DEFAULT_KNOWLEDGE.map((item) => [item.id, true]));
   });
+  const [activeKnowledgeSource, setActiveKnowledgeSource] = useState<'platform' | 'personal'>('platform');
+  const [knowledgeSearchQuery, setKnowledgeSearchQuery] = useState('');
+  const [knowledgeTagFilter, setKnowledgeTagFilter] = useState('全部');
+  const [knowledgeSortMode, setKnowledgeSortMode] = useState<'recent' | 'title'>('recent');
+  const [referencedKnowledgeIds, setReferencedKnowledgeIds] = useState<string[]>([]);
 
   const [collapsedKnowledgeGroups, setCollapsedKnowledgeGroups] = useState<Record<KnowledgeItem['group'], boolean>>({
     '领域专业知识': false,
     '团队知识': false,
+    '个人资产': false,
   });
-  const [activeKnowledgeTab, setActiveKnowledgeTab] = useState<'docs' | 'images' | 'videos' | 'reports'>('docs');
+  const [activeKnowledgeTab, setActiveKnowledgeTab] = useState<AssetTabKey>('user_insight');
   const [galleryCategory, setGalleryCategory] = useState<string>('全部');
   const [galleryHoverId, setGalleryHoverId] = useState<string | null>(null);
   const [skillCategoryFilter, setSkillCategoryFilter] = useState<SkillMarketCategory | '全部技能'>('全部技能');
   const [skillSearchQuery, setSkillSearchQuery] = useState('');
+  const [activeSkillSource, setActiveSkillSource] = useState<SkillSource>('platform');
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillMarketItem | null>(null);
+  const [activeSkillDetailTab, setActiveSkillDetailTab] = useState<'overview' | 'history'>('overview');
+  const personalSkillUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [personalSkillPackages, setPersonalSkillPackages] = useState<PersonalSkillPackage[]>(loadPersonalSkillPackages);
+  const [selectedPersonalSkillId, setSelectedPersonalSkillId] = useState<string | null>(() => loadPersonalSkillPackages()[0]?.id ?? null);
+  const [selectedPersonalNodeId, setSelectedPersonalNodeId] = useState<string | null>(() => {
+    const firstPackage = loadPersonalSkillPackages()[0];
+    return firstPackage ? findFirstPersonalSkillFile(firstPackage.nodes)?.id ?? null : null;
+  });
+  const [personalSkillViewMode, setPersonalSkillViewMode] = useState<'preview' | 'edit'>('preview');
+  const [expandedPersonalSkillIds, setExpandedPersonalSkillIds] = useState<Record<string, boolean>>(() => {
+    const [firstPackage] = loadPersonalSkillPackages();
+    return firstPackage ? { [firstPackage.id]: true } : {};
+  });
+  const [expandedPersonalFolderIds, setExpandedPersonalFolderIds] = useState<Record<string, boolean>>({});
+  const [collapsedSkillGroups, setCollapsedSkillGroups] = useState<Record<SkillMarketCategory, boolean>>({
+    '高保真设计': false,
+    '用户研究': false,
+    '视觉设计': false,
+    '竞品分析': false,
+    '趋势报告': false,
+    '体验评估': false,
+  });
 
   // ── Project Selection State ───────────────────────────────────────────────
   const [selectedDomain, setSelectedDomain] = useState<Domain>('ICT');
@@ -1069,6 +1725,66 @@ export function ClientShell({
   }, [skills, selectedSkillDetail]);
 
   useEffect(() => {
+    savePersonalSkillPackages(personalSkillPackages);
+  }, [personalSkillPackages]);
+
+  const filteredPersonalSkillPackages = useMemo(() => {
+    const q = skillSearchQuery.trim().toLowerCase();
+    return personalSkillPackages
+      .map((pkg) => {
+        if (!q) return pkg;
+        const filteredNodes = filterPersonalSkillNodes(pkg.nodes, q);
+        const matchesPkg = pkg.name.toLowerCase().includes(q) || pkg.summary.toLowerCase().includes(q);
+        if (!matchesPkg && filteredNodes.length === 0) return null;
+        return { ...pkg, nodes: matchesPkg && filteredNodes.length === 0 ? pkg.nodes : filteredNodes };
+      })
+      .filter((item): item is PersonalSkillPackage => item !== null);
+  }, [personalSkillPackages, skillSearchQuery]);
+
+  const selectedPersonalSkill = useMemo(
+    () => filteredPersonalSkillPackages.find((pkg) => pkg.id === selectedPersonalSkillId) ?? filteredPersonalSkillPackages[0] ?? null,
+    [filteredPersonalSkillPackages, selectedPersonalSkillId],
+  );
+
+  const selectedPersonalNode = useMemo(() => {
+    if (!selectedPersonalSkill || !selectedPersonalNodeId) return findFirstPersonalSkillFile(selectedPersonalSkill?.nodes ?? []);
+    return findPersonalSkillNode(selectedPersonalSkill.nodes, selectedPersonalNodeId);
+  }, [selectedPersonalNodeId, selectedPersonalSkill]);
+
+  const selectedPersonalFile = selectedPersonalNode?.type === 'file' ? selectedPersonalNode : null;
+
+  useEffect(() => {
+    if (!filteredPersonalSkillPackages.length) {
+      setSelectedPersonalSkillId(null);
+      setSelectedPersonalNodeId(null);
+      return;
+    }
+
+    const currentPackage = filteredPersonalSkillPackages.find((pkg) => pkg.id === selectedPersonalSkillId) ?? filteredPersonalSkillPackages[0];
+    if (currentPackage.id !== selectedPersonalSkillId) {
+      setSelectedPersonalSkillId(currentPackage.id);
+    }
+
+    const currentNode = selectedPersonalNodeId ? findPersonalSkillNode(currentPackage.nodes, selectedPersonalNodeId) : null;
+    if (!currentNode || currentNode.type !== 'file') {
+      const firstFile = findFirstPersonalSkillFile(currentPackage.nodes);
+      setSelectedPersonalNodeId(firstFile?.id ?? null);
+    }
+  }, [filteredPersonalSkillPackages, selectedPersonalNodeId, selectedPersonalSkillId]);
+
+  useEffect(() => {
+    if (!skillSearchQuery.trim()) return;
+    setExpandedPersonalSkillIds(
+      Object.fromEntries(filteredPersonalSkillPackages.map((pkg) => [pkg.id, true])),
+    );
+    if (selectedPersonalSkill) {
+      setExpandedPersonalFolderIds(
+        Object.fromEntries(collectPersonalFolderIds(selectedPersonalSkill.nodes).map((id) => [id, true])),
+      );
+    }
+  }, [filteredPersonalSkillPackages, selectedPersonalSkill, skillSearchQuery]);
+
+  useEffect(() => {
     if (!shellRef.current || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
       setNavWidth((prev) => clampNavWidth(prev));
@@ -1131,62 +1847,180 @@ export function ClientShell({
     });
   }, [skillCategoryFilter, skillSearchQuery, skills]);
 
+  const groupedVisibleSkills = useMemo(() => {
+    const groups = SKILL_MARKET_CATEGORIES
+      .map((category) => ({
+        category,
+        items: visibleSkills.filter((skill) => skill.category === category),
+      }))
+      .filter((group) => group.items.length > 0);
+
+    if (skillCategoryFilter !== '全部技能') {
+      return groups.filter((group) => group.category === skillCategoryFilter);
+    }
+
+    return groups;
+  }, [skillCategoryFilter, visibleSkills]);
+
   const closeSkillDetail = useCallback(() => {
+    setActiveSkillDetailTab('overview');
     setSelectedSkillDetail(null);
   }, []);
 
+  const togglePersonalSkillPackage = useCallback((pkg: PersonalSkillPackage) => {
+    setExpandedPersonalSkillIds((prev) => ({ ...prev, [pkg.id]: !(prev[pkg.id] ?? false) }));
+    setSelectedPersonalSkillId(pkg.id);
+    const firstFile = findFirstPersonalSkillFile(pkg.nodes);
+    if (firstFile) setSelectedPersonalNodeId(firstFile.id);
+  }, []);
+
+  const togglePersonalSkillFolder = useCallback((folderId: string) => {
+    setExpandedPersonalFolderIds((prev) => ({ ...prev, [folderId]: !(prev[folderId] ?? false) }));
+  }, []);
+
+  const handlePersonalSkillContentChange = useCallback((nextContent: string) => {
+    if (!selectedPersonalSkill || !selectedPersonalFile) return;
+    const updatedAt = Date.now();
+    setPersonalSkillPackages((prev) => prev.map((pkg) => (
+      pkg.id === selectedPersonalSkill.id
+        ? {
+            ...pkg,
+            updatedAt,
+            nodes: updatePersonalSkillNodeContent(pkg.nodes, selectedPersonalFile.id, nextContent, updatedAt),
+          }
+        : pkg
+    )));
+  }, [selectedPersonalFile, selectedPersonalSkill]);
+
+  const handlePersonalSkillUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    const zipFiles = files.filter((file) => /\.zip$/i.test(file.name));
+    if (!zipFiles.length) {
+      setToast('仅支持上传 .zip 技能包');
+      event.target.value = '';
+      return;
+    }
+
+    const createdPackages = zipFiles.map((file) => createPersonalSkillPackageFromArchive(file));
+    const firstPackage = createdPackages[0];
+    const firstFile = firstPackage ? findFirstPersonalSkillFile(firstPackage.nodes) : null;
+
+    setPersonalSkillPackages((prev) => [...createdPackages, ...prev]);
+
+    if (firstPackage) {
+      setExpandedPersonalSkillIds((prev) => ({
+        ...prev,
+        ...Object.fromEntries(createdPackages.map((pkg) => [pkg.id, true])),
+      }));
+      setSelectedPersonalSkillId(firstPackage.id);
+      setSelectedPersonalNodeId(firstFile?.id ?? null);
+      setPersonalSkillViewMode('preview');
+    }
+
+    if (zipFiles.length !== files.length) {
+      setToast(`已导入 ${zipFiles.length} 个 zip 技能包，非 zip 文件已忽略`);
+    } else {
+      setToast(`已导入 ${zipFiles.length} 个 zip 技能包`);
+    }
+    event.target.value = '';
+  }, []);
+
+  const toggleSkillGroup = useCallback((category: SkillMarketCategory) => {
+    setCollapsedSkillGroups((prev) => ({ ...prev, [category]: !prev[category] }));
+  }, []);
+
+  const scopedKnowledgeItems = useMemo(
+    () => knowledgeItems.filter((item) => getKnowledgeSource(item) === activeKnowledgeSource),
+    [activeKnowledgeSource, knowledgeItems],
+  );
+
+  const knowledgeTagOptions = useMemo(() => {
+    const tags = Array.from(new Set(scopedKnowledgeItems.flatMap((item) => item.tags ?? [])));
+    return ['全部', ...tags.slice(0, 8)];
+  }, [scopedKnowledgeItems]);
+
+  const filteredKnowledgeItems = useMemo(() => {
+    const q = knowledgeSearchQuery.trim().toLowerCase();
+    const next = scopedKnowledgeItems.filter((item) => {
+      const matchesQuery = !q
+        || item.title.toLowerCase().includes(q)
+        || (item.owner ?? '').toLowerCase().includes(q)
+        || (item.tags ?? []).some((tag) => tag.toLowerCase().includes(q));
+      const matchesTag = knowledgeTagFilter === '全部' || (item.tags ?? []).includes(knowledgeTagFilter);
+      return matchesQuery && matchesTag;
+    });
+    return [...next].sort((a, b) => knowledgeSortMode === 'recent'
+      ? b.updatedAt - a.updatedAt
+      : a.title.localeCompare(b.title, 'zh-CN'));
+  }, [knowledgeSearchQuery, knowledgeSortMode, knowledgeTagFilter, scopedKnowledgeItems]);
+
   const groupedKnowledgeItems = useMemo(() => {
-    return KNOWLEDGE_GROUPS.map((group) => ({
+    const groups = activeKnowledgeSource === 'platform'
+      ? (['领域专业知识', '团队知识'] as KnowledgeItem['group'][])
+      : (['个人资产'] as KnowledgeItem['group'][]);
+    return groups.map((group) => ({
       group,
-      items: knowledgeItems
-        .filter((item) => item.group === group)
-        .sort((a, b) => b.updatedAt - a.updatedAt),
-    }));
-  }, [knowledgeItems]);
+      items: filteredKnowledgeItems.filter((item) => item.group === group),
+    })).filter(({ items }) => items.length > 0);
+  }, [activeKnowledgeSource, filteredKnowledgeItems]);
 
   const selectedKnowledgeItem = useMemo(
-    () => knowledgeItems.find((item) => item.id === selectedKnowledgeId) ?? knowledgeItems[0] ?? null,
-    [knowledgeItems, selectedKnowledgeId],
+    () => filteredKnowledgeItems.find((item) => item.id === selectedKnowledgeId) ?? filteredKnowledgeItems[0] ?? null,
+    [filteredKnowledgeItems, selectedKnowledgeId],
+  );
+
+  const referencedKnowledgeItems = useMemo(
+    () => knowledgeItems.filter((item) => referencedKnowledgeIds.includes(item.id)),
+    [knowledgeItems, referencedKnowledgeIds],
+  );
+
+  const knowledgeConflictItem = useMemo(
+    () => referencedKnowledgeItems.find((item) => getKnowledgeSource(item) === 'personal' && item.riskNote),
+    [referencedKnowledgeItems],
   );
 
   useEffect(() => {
-    if (!knowledgeItems.length) {
+    if (!filteredKnowledgeItems.length) {
       setSelectedKnowledgeId(null);
       return;
     }
-    if (!selectedKnowledgeId || !knowledgeItems.some((item) => item.id === selectedKnowledgeId)) {
-      setSelectedKnowledgeId(knowledgeItems[0].id);
+    if (!selectedKnowledgeId || !filteredKnowledgeItems.some((item) => item.id === selectedKnowledgeId)) {
+      setSelectedKnowledgeId(filteredKnowledgeItems[0].id);
     }
-  }, [knowledgeItems, selectedKnowledgeId]);
+  }, [filteredKnowledgeItems, selectedKnowledgeId]);
 
   const handleKnowledgeUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
-    const preferredGroup = knowledgeUploadGroupRef.current;
-
     const created = files.map((file, index) => {
       const rawExt = file.name.split('.').pop()?.toLowerCase() ?? 'txt';
       const format = (KNOWLEDGE_FORMATS.includes(rawExt as NonNullable<KnowledgeItem['format']>)
         ? rawExt
         : 'txt') as NonNullable<KnowledgeItem['format']>;
       const title = file.name.replace(/\.[^/.]+$/, '') || `上传文档 ${index + 1}`;
-      const group = preferredGroup ?? (index % 2 === 0 ? '领域专业知识' : '团队知识');
 
       const createdItem: KnowledgeItem = {
         id: makeId('kb_upload'),
         title,
-        group,
-        type: group === '领域专业知识' ? 'report' : 'doc',
+        source: 'personal',
+        group: '个人资产',
+        type: 'doc',
         size: formatFileSize(file.size),
         updatedAt: Date.now() + index,
         format,
         owner: '你',
-        tags: ['上传文档', format.toUpperCase(), '待整理'],
-        snippet: `已上传文件《${file.name}》（示意）。当前版本仅提供知识卡片创建与可编辑预览，不解析文件正文。`,
+        visibility: 'private',
+        uploadSource: 'local',
+        authority: '参考',
+        applicableScenarios: ['当前会话补充', '交付复用', '本地上传'],
+        citationLabel: `个人资产 · ${title}`,
+        tags: ['上传资产', format.toUpperCase(), '待整理'],
+        snippet: `已上传文件《${file.name}》（示意）。系统已创建个人资产卡片，可直接引用到当前会话。`,
         sections: [
           { title: '来源信息', content: `来源文件：${file.name}\n文件类型：${format.toUpperCase()}\n导入时间：${formatTime(Date.now())}` },
-          { title: '知识摘要（可编辑）', content: '请在这里补充该文档的核心内容、结论与可复用信息。' },
-          { title: '行动建议（可编辑）', content: '请补充下一步动作、负责人和交付时间。' },
+          { title: '资产摘要（可编辑）', content: '请在这里补充该资产的核心内容、结论与可复用信息。' },
+          { title: '行动建议（可编辑）', content: '请补充下一步动作、负责人和适用场景。' },
         ],
       };
       createdItem.content = buildKnowledgeDocumentHtml(createdItem);
@@ -1202,7 +2036,8 @@ export function ClientShell({
       return next;
     });
     setSelectedKnowledgeId(created[0]?.id ?? null);
-    setToast(`已上传 ${created.length} 份知识（示意）`);
+    setActiveKnowledgeSource('personal');
+    setToast(`已上传 ${created.length} 份个人资产`);
     knowledgeUploadGroupRef.current = null;
     event.target.value = '';
   }, []);
@@ -1210,6 +2045,10 @@ export function ClientShell({
   const handleKnowledgeUploadClick = useCallback((group: KnowledgeItem['group']) => {
     knowledgeUploadGroupRef.current = group;
     knowledgeUploadInputRef.current?.click();
+  }, []);
+
+  const toggleKnowledgeReference = useCallback((id: string) => {
+    setReferencedKnowledgeIds((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]);
   }, []);
 
   const toggleKnowledgeEnabled = useCallback((id: string) => {
@@ -1731,7 +2570,7 @@ export function ClientShell({
                         </button>
                       )}
                       {editingConversationId !== conversation.id && (
-                        <div className="absolute right-[4px] top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-[4px] bg-gradient-to-l from-[rgba(255,255,255,1)] via-[rgba(255,255,255,0.95)] to-transparent px-[8px] py-[4px]">
+                        <div className="absolute right-[4px] top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-[4px] px-[4px] py-[4px]">
                           <button
                             onClick={(e) => { e.stopPropagation(); setEditingConversationId(conversation.id); setEditingTitle(conversation.title); }}
                             className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#191919] hover:bg-[#f0f0f0]"
@@ -1854,6 +2693,14 @@ export function ClientShell({
 
         {activeNav === 'skill_market' && (
           <div className="h-full flex flex-col bg-transparent">
+            <input
+              ref={personalSkillUploadInputRef}
+              type="file"
+              multiple
+              accept=".zip,application/zip,application/x-zip-compressed"
+              onChange={handlePersonalSkillUpload}
+              className="hidden"
+            />
             <div className="shrink-0 border-b border-[rgba(0,0,0,0.08)] pl-[16px] pr-[40px] pt-[12px] pb-[13px]">
               <div className="flex items-center gap-[16px] min-h-[44px]">
                 <div className="relative shrink-0 flex size-[36px] items-center justify-center overflow-hidden rounded-[10px] border border-white/35 bg-white/18 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_18px_rgba(148,163,184,0.14)] backdrop-blur-[14px]">
@@ -1863,651 +2710,616 @@ export function ClientShell({
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-bold leading-[20px] text-black">技能社区</div>
-                  <div className="mt-[4px] text-[12px] leading-[18px] text-[rgba(0,0,0,0.6)]">
-                    发现、安装与管理 Agent 技能扩展，快速补齐工作流能力
-                  </div>
+                  <div className="text-[14px] font-bold leading-[20px] text-black">技能库</div>
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 flex bg-transparent">
-              <div className="w-[268px] shrink-0 bg-[#fafafa] border-r border-[rgba(25,25,25,0.08)] px-4 py-6 flex flex-col">
-                <div className="flex-1 overflow-y-auto space-y-1.5 pr-1" style={{ scrollbarWidth: 'thin' }}>
-                {([
-                  {
-                    key: '全部技能' as const,
-                    label: '全部技能',
-                    icon: Sparkles,
-                    accent: '#1476ff',
-                    accentBg: '#eff6ff',
-                  },
-                  ...SKILL_MARKET_CATEGORIES.map((category) => ({
-                    key: category,
-                    label: category,
-                    icon: SKILL_CATEGORY_UI[category].icon,
-                    accent: SKILL_CATEGORY_UI[category].accent,
-                    accentBg: SKILL_CATEGORY_UI[category].accentBg,
-                  })),
-                ]).map((category) => {
-                  const CategoryIcon = category.icon;
-                  const isActive = skillCategoryFilter === category.key;
-                  return (
-                    <button
-                      key={category.key}
-                      type="button"
-                      onClick={() => setSkillCategoryFilter(category.key)}
-                      className={`w-full h-14 px-4 rounded-[16px] flex items-center gap-3 text-left transition-colors ${
-                        isActive ? 'bg-[#ece9e9] text-[#191919]' : 'text-[#191919] hover:bg-[#f1f1f1]'
-                      }`}
-                    >
-                      <span
-                        className="w-9 h-9 rounded-[12px] flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: category.accentBg, color: category.accent }}
-                      >
-                        <CategoryIcon size={20} />
-                      </span>
-                      <span className="text-[14px] font-medium">{category.label}</span>
-                    </button>
-                  );
-                })}
-                </div>
+            <div className="shrink-0 flex items-center gap-[10px] px-[20px] h-[52px] border-b border-[rgba(0,0,0,0.06)]">
+              <div className="flex items-center gap-[10px]">
+                {(['platform', 'personal'] as SkillSource[]).map((src) => (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => {
+                      setActiveSkillSource(src);
+                      closeSkillDetail();
+                    }}
+                    className={`rounded-[18px] px-[12px] py-[4px] text-[14px] leading-[20px] transition-colors ${
+                      activeSkillSource === src
+                        ? 'bg-[rgba(10,89,247,0.10)] text-[#0a59f7] font-medium'
+                        : 'text-[#191919] hover:text-[#0a59f7]'
+                    }`}
+                  >
+                    {SKILL_SOURCE_LABEL[src]}
+                  </button>
+                ))}
               </div>
-
-              <div className="flex-1 min-w-0 flex flex-col">
-                <div className="px-7 py-6 border-b border-[rgba(25,25,25,0.08)] flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-[16px] font-semibold text-[#191919]">{skillCategoryFilter}</div>
-                    <div className="text-[12px] text-[#808080] mt-1">已选 {installedSkillsCount}/{skills.length}</div>
-                  </div>
-                  <div className="relative w-full max-w-[320px] shrink-0">
-                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[rgba(25,25,25,0.35)]" />
-                    <input
-                      type="text"
-                      value={skillSearchQuery}
-                      onChange={(e) => setSkillSearchQuery(e.target.value)}
-                      placeholder="搜索技能"
-                      className="w-full h-10 pl-10 pr-4 rounded-[12px] text-[14px] text-[#191919] placeholder:text-[rgba(25,25,25,0.35)] outline-none border border-[rgba(0,0,0,0.08)] focus:border-[rgba(0,0,0,0.16)] bg-white"
-                    />
-                  </div>
+              <div className="ml-auto flex items-center gap-[10px]">
+                <div className="relative">
+                  <Search size={12} className="absolute left-[10px] top-1/2 -translate-y-1/2 text-[rgba(0,0,0,0.35)]" />
+                  <input
+                    type="text"
+                    value={skillSearchQuery}
+                    onChange={(e) => setSkillSearchQuery(e.target.value)}
+                    placeholder={activeSkillSource === 'personal' ? '搜索' : '搜索技能'}
+                    className="w-[280px] h-[36px] rounded-[12px] bg-[rgba(0,0,0,0.04)] pl-[30px] pr-[10px] text-[12px] text-[#1a1a1a] outline-none focus:bg-white focus:shadow-[0_0_0_1px_rgba(20,118,255,0.35)] transition-all"
+                  />
                 </div>
-
-                <div className="flex-1 overflow-y-auto px-7 py-4 min-h-0" style={{ scrollbarWidth: 'thin' }}>
-                  <div className="space-y-0">
-                    {visibleSkills.map((skill) => {
-                      const categoryUi = SKILL_CATEGORY_UI[skill.category];
-                      const SkillIcon = categoryUi.icon;
-                      return (
-                        <div
-                          key={skill.id}
-                          className="min-h-[104px] border-b border-[rgba(25,25,25,0.08)] flex items-center gap-4"
-                        >
-                          <div
-                            onClick={() => setSelectedSkillDetail(skill)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                setSelectedSkillDetail(skill);
-                              }
-                            }}
-                            className="min-w-0 flex-1 flex items-center gap-4 cursor-pointer rounded-[18px] -mx-3 px-3 py-3 hover:bg-[#fafafa] transition-colors"
-                          >
-                            <div
-                              className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0"
-                              style={{ backgroundColor: categoryUi.accentBg, color: categoryUi.accent }}
-                            >
-                              <SkillIcon size={20} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-[14px] font-semibold text-[#191919]">{skill.name}</div>
-                              <div className="text-[12px] text-[#808080] mt-1 leading-[1.7]">{skill.description}</div>
-                            </div>
-                            <div className="shrink-0 flex items-center gap-2 text-[#999]">
-                              <span className="text-[11px] text-[#999]">查看详情</span>
-                              <ChevronRight size={16} />
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleSkill(skill.id);
-                            }}
-                            className={`w-10 h-6 rounded-full transition-colors shrink-0 relative ${
-                              skill.enabled ? 'bg-[#1476ff]' : 'bg-[#d7dbe4]'
-                            }`}
-                            aria-label={`${skill.enabled ? '停用' : '启用'} ${skill.name}`}
-                          >
-                            <span
-                              className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-white transition-colors ${
-                                skill.enabled ? 'left-5' : 'left-1'
-                              }`}
-                            />
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {visibleSkills.length === 0 && (
-                      <div className="py-16 text-center text-[14px] text-[#999]">
-                        未找到匹配的技能
-                      </div>
-                    )}
-                  </div>
-                </div>
+                {activeSkillSource === 'personal' && (
+                  <button
+                    type="button"
+                    onClick={() => personalSkillUploadInputRef.current?.click()}
+                    className="inline-flex h-[36px] items-center gap-[6px] rounded-[12px] bg-[#1476ff] px-[14px] text-[13px] font-medium text-white hover:bg-[#0f67de] transition-colors"
+                  >
+                    <Upload size={14} />
+                    <span>上传</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            {createPortal(
-              <AnimatePresence>
-                {selectedSkillDetail && (() => {
+            {activeSkillSource === 'personal' ? (
+              <PersonalSkillWorkspace
+                packages={filteredPersonalSkillPackages}
+                selectedPackage={selectedPersonalSkill}
+                selectedFile={selectedPersonalFile}
+                viewMode={personalSkillViewMode}
+                expandedPackageIds={expandedPersonalSkillIds}
+                expandedFolderIds={expandedPersonalFolderIds}
+                onTogglePackage={togglePersonalSkillPackage}
+                onToggleFolder={togglePersonalSkillFolder}
+                onSelectPackage={setSelectedPersonalSkillId}
+                onSelectFile={setSelectedPersonalNodeId}
+                onViewModeChange={setPersonalSkillViewMode}
+                onContentChange={handlePersonalSkillContentChange}
+              />
+            ) : selectedSkillDetail ? (
+              <div className="flex-1 min-h-0 overflow-y-auto bg-transparent px-[32px] py-[32px]" style={{ scrollbarWidth: 'thin' }}>
+                {(() => {
                   const categoryUi = SKILL_CATEGORY_UI[selectedSkillDetail.category];
                   const SkillIcon = categoryUi.icon;
                   return (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="fixed inset-0 z-50 overflow-y-auto bg-black/30 backdrop-blur-[2px] px-6 py-6"
-                      onClick={closeSkillDetail}
-                    >
-                      <div className="min-h-full flex items-start justify-center">
-                        <motion.div
-                          initial={{ opacity: 0, y: 12, scale: 0.985 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: 8, scale: 0.985 }}
-                          transition={{ duration: 0.16 }}
-                          onClick={(event) => event.stopPropagation()}
-                          className="w-[1200px] max-w-[calc(100vw-48px)] rounded-[14px] bg-white border border-[rgba(25,25,25,0.08)] shadow-[0_8px_40px_rgba(0,0,0,0.18),0_2px_8px_rgba(0,0,0,0.08)] overflow-hidden"
+                    <div className="rounded-[16px] bg-white px-[32px] py-[24px]">
+                      <button
+                        type="button"
+                        onClick={closeSkillDetail}
+                        className="inline-flex items-center gap-[6px] text-[14px] font-medium text-[#191919] hover:text-[#0a59f7] transition-colors"
+                      >
+                        <ArrowLeft size={16} />
+                        <span>{SKILL_SOURCE_LABEL[activeSkillSource]}</span>
+                      </button>
+
+                      <div className="mt-[24px] flex items-start justify-between gap-[24px] pb-[20px]">
+                        <div className="min-w-0 flex items-start gap-[16px]">
+                          <div
+                            className="flex size-[40px] shrink-0 items-center justify-center rounded-[12px]"
+                            style={{ backgroundColor: categoryUi.accentBg, color: categoryUi.accent }}
+                          >
+                            <SkillIcon size={20} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[20px] font-semibold leading-[28px] text-[#191919]">{selectedSkillDetail.name}</div>
+                            <div className="mt-[4px] text-[14px] leading-[22px] text-[rgba(25,25,25,0.7)]">
+                              {selectedSkillDetail.detail.tagline}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => toggleSkill(selectedSkillDetail.id)}
+                          className={`mt-[4px] h-[24px] w-[40px] rounded-full transition-colors shrink-0 relative ${
+                            selectedSkillDetail.enabled ? 'bg-[#0a59f7]' : 'bg-[#d7dbe4]'
+                          }`}
+                          aria-label={`${selectedSkillDetail.enabled ? '停用' : '启用'} ${selectedSkillDetail.name}`}
                         >
-                          <div className="px-6 py-5 border-b border-[rgba(25,25,25,0.08)]">
-                          <div className="flex items-start gap-4">
-                            <div
-                              className="w-12 h-12 rounded-[12px] flex items-center justify-center shrink-0"
-                              style={{ backgroundColor: categoryUi.accentBg, color: categoryUi.accent }}
-                            >
-                              <SkillIcon size={24} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-4">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <h3 className="text-[16px] font-semibold text-[#191919]">{selectedSkillDetail.name}</h3>
-                                    <span className="text-[12px] text-[rgba(25,25,25,0.6)]">Skill</span>
-                                  </div>
-                                  <p className="mt-3 text-[14px] text-[#191919] leading-[1.7] max-w-[640px]">
-                                    {selectedSkillDetail.detail.tagline}
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={closeSkillDetail}
-                                  className="w-8 h-8 flex items-center justify-center rounded-[8px] text-[#191919] hover:bg-[#f5f5f5] transition-colors shrink-0"
-                                >
-                                  <X size={16} />
-                                </button>
-                              </div>
-
-                              <div className="mt-4 flex items-center justify-between gap-4">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <span
-                                      className="inline-flex items-center gap-1 rounded-[6px] px-[8px] py-[4px] text-[12px] font-medium"
-                                      style={{ backgroundColor: categoryUi.accentBg, color: categoryUi.accent }}
-                                    >
-                                      <SkillIcon size={12} />
-                                      {selectedSkillDetail.category}
-                                    </span>
-                                    <span className="text-[12px] text-[rgba(25,25,25,0.6)]">版本 {selectedSkillDetail.detail.version}</span>
-                                    <span className="text-[12px] text-[rgba(25,25,25,0.4)]">更新于 {selectedSkillDetail.detail.updatedAt}</span>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleSkill(selectedSkillDetail.id)}
-                                  className={`w-12 h-7 rounded-full transition-colors shrink-0 relative ${
-                                    selectedSkillDetail.enabled ? 'bg-[#1476ff]' : 'bg-[#d7dbe4]'
-                                  }`}
-                                  aria-label={`${selectedSkillDetail.enabled ? '停用' : '启用'} ${selectedSkillDetail.name}`}
-                                >
-                                  <span
-                                    className={`absolute top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-white transition-colors ${
-                                      selectedSkillDetail.enabled ? 'left-6' : 'left-1'
-                                    }`}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                          </div>
-
-                          <div className="px-6 py-6 space-y-6">
-                            <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-white p-[20px]">
-                              <p className="text-[14px] text-[#191919] leading-[1.8]">{selectedSkillDetail.detail.overview}</p>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-6">
-                              <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-white p-[20px]">
-                                <div className="text-[16px] font-semibold text-[#191919]">适用场景</div>
-                                <div className="mt-3 space-y-2">
-                                  {selectedSkillDetail.detail.useCases.map((item) => (
-                                    <div key={item} className="flex gap-2 text-[14px] text-[#191919] leading-[1.7]">
-                                      <span className="text-[#1476ff]">•</span>
-                                      <span>{item}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                              <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-white p-[20px]">
-                                <div className="text-[16px] font-semibold text-[#191919]">输出内容</div>
-                                <div className="mt-3 space-y-2">
-                                  {selectedSkillDetail.detail.outputs.map((item) => (
-                                    <div key={item} className="flex gap-2 text-[14px] text-[#191919] leading-[1.7]">
-                                      <span className="text-[#1476ff]">•</span>
-                                      <span>{item}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-white p-[20px]">
-                              <div className="text-[16px] font-semibold text-[#191919]">推荐工作流</div>
-                              <div className="mt-4 space-y-3">
-                                {selectedSkillDetail.detail.workflow.map((item, index) => (
-                                  <div key={item} className="flex items-start gap-3">
-                                    <span className="w-5 h-5 rounded-full bg-[rgba(20,118,255,0.08)] text-[#1476ff] text-[10px] font-medium flex items-center justify-center shrink-0 mt-0.5">
-                                      {index + 1}
-                                    </span>
-                                    <span className="text-[14px] text-[#191919] leading-[1.7]">{item}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-white p-[20px]">
-                              <div className="text-[16px] font-semibold text-[#191919]">使用规则</div>
-                              <div className="mt-3 space-y-2">
-                                {selectedSkillDetail.detail.rules.map((item) => (
-                                  <div key={item} className="flex gap-2 text-[14px] text-[#191919] leading-[1.7]">
-                                    <span className="text-[#6d28d9]">•</span>
-                                    <span>{item}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="px-6 py-4 border-t border-[rgba(25,25,25,0.08)] flex items-center justify-between gap-4">
-                            <button
-                              onClick={() => toggleSkill(selectedSkillDetail.id)}
-                              className={`h-10 px-[16px] py-[10px] rounded-[8px] text-[12px] font-medium transition-colors active:scale-[0.98] ${
-                                selectedSkillDetail.enabled
-                                  ? 'text-[#e11d48] hover:bg-[#fef2f2]'
-                                  : 'bg-[#1476ff] text-white hover:bg-[#1060d0]'
-                              }`}
-                            >
-                              {selectedSkillDetail.enabled ? '卸载技能' : '添加技能'}
-                            </button>
-                            <button
-                              onClick={closeSkillDetail}
-                              className="h-10 px-[16px] py-[10px] rounded-[8px] border border-[rgba(25,25,25,0.12)] text-[12px] font-medium text-[#191919] hover:bg-[#f5f5f5] transition-colors active:scale-[0.98]"
-                            >
-                              关闭详情
-                            </button>
-                          </div>
-                        </motion.div>
+                          <span
+                            className={`absolute top-1/2 size-[16px] -translate-y-1/2 rounded-full bg-white transition-all ${
+                              selectedSkillDetail.enabled ? 'left-[20px]' : 'left-[2px]'
+                            }`}
+                          />
+                        </button>
                       </div>
-                    </motion.div>
+
+                      <div className="flex items-center gap-[24px] border-b border-[rgba(25,25,25,0.08)]">
+                        {([
+                          { key: 'overview' as const, label: '概述' },
+                          { key: 'history' as const, label: '版本历史' },
+                        ]).map((tab) => (
+                          <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setActiveSkillDetailTab(tab.key)}
+                            className={`relative h-[40px] text-[14px] transition-colors ${
+                              activeSkillDetailTab === tab.key
+                                ? 'font-medium text-[#0a59f7]'
+                                : 'text-[rgba(25,25,25,0.55)] hover:text-[#191919]'
+                            }`}
+                          >
+                            {tab.label}
+                            {activeSkillDetailTab === tab.key && (
+                              <span className="absolute inset-x-0 bottom-0 h-[2px] rounded-full bg-[#0a59f7]" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+
+                      {activeSkillDetailTab === 'overview' ? (
+                        <div className="pt-[28px] pb-[8px] text-[#191919]">
+                          <div className="text-[30px] font-semibold leading-[40px]">{selectedSkillDetail.name}</div>
+
+                          <div className="mt-[32px] space-y-[32px]">
+                            <section>
+                              <div className="text-[16px] font-semibold leading-[24px]">核心概念</div>
+                              <p className="mt-[12px] text-[14px] leading-[28px] text-[rgba(25,25,25,0.85)]">
+                                {selectedSkillDetail.detail.overview}
+                              </p>
+                            </section>
+
+                            <section>
+                              <div className="text-[16px] font-semibold leading-[24px]">适用场景</div>
+                              <div className="mt-[12px] space-y-[4px]">
+                                {selectedSkillDetail.detail.useCases.map((item) => (
+                                  <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.85)]">
+                                    • {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+
+                            <section>
+                              <div className="text-[16px] font-semibold leading-[24px]">输出内容</div>
+                              <div className="mt-[12px] space-y-[4px]">
+                                {selectedSkillDetail.detail.outputs.map((item) => (
+                                  <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.85)]">
+                                    • {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+
+                            <section>
+                              <div className="text-[16px] font-semibold leading-[24px]">推荐工作流</div>
+                              <div className="mt-[12px] space-y-[4px]">
+                                {selectedSkillDetail.detail.workflow.map((item, index) => (
+                                  <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.85)]">
+                                    {index + 1}. {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+
+                            <section>
+                              <div className="text-[16px] font-semibold leading-[24px]">使用规则</div>
+                              <div className="mt-[12px] space-y-[4px]">
+                                {selectedSkillDetail.detail.rules.map((item) => (
+                                  <div key={item} className="text-[14px] leading-[28px] text-[rgba(25,25,25,0.85)]">
+                                    • {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="pt-[28px] pb-[8px]">
+                          <div className="rounded-[12px] border border-[rgba(25,25,25,0.08)] bg-[#fafbfd] px-[20px] py-[18px]">
+                            <div className="flex items-center justify-between gap-[12px]">
+                              <div>
+                                <div className="text-[15px] font-semibold leading-[22px] text-[#191919]">
+                                  版本 {selectedSkillDetail.detail.version}
+                                </div>
+                                <div className="mt-[4px] text-[13px] leading-[20px] text-[rgba(25,25,25,0.55)]">
+                                  更新于 {selectedSkillDetail.detail.updatedAt}
+                                </div>
+                              </div>
+                              <span
+                                className="inline-flex items-center gap-[6px] rounded-[999px] px-[10px] py-[4px] text-[12px] font-medium"
+                                style={{ backgroundColor: categoryUi.accentBg, color: categoryUi.accent }}
+                              >
+                                <SkillIcon size={12} />
+                                {selectedSkillDetail.category}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="mt-[16px] rounded-[12px] border border-dashed border-[rgba(25,25,25,0.12)] px-[20px] py-[18px] text-[14px] leading-[24px] text-[rgba(25,25,25,0.6)]">
+                            当前原型只提供最新版本信息展示，后续可在这里补充变更记录、发布时间和版本对比。
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   );
                 })()}
-              </AnimatePresence>,
-              document.body
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 flex bg-transparent">
+                <div className="w-[280px] shrink-0 border-r border-[rgba(25,25,25,0.08)] bg-transparent px-[16px] py-[16px]">
+                  <div className="h-full overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+                    <div className="space-y-[2px]">
+                      {([
+                        {
+                          key: '全部技能' as const,
+                          label: '全部技能',
+                          icon: Sparkles,
+                          accent: '#1476ff',
+                          accentBg: '#eff6ff',
+                        },
+                        ...SKILL_MARKET_CATEGORIES.map((category) => ({
+                          key: category,
+                          label: category,
+                          icon: SKILL_CATEGORY_UI[category].icon,
+                          accent: SKILL_CATEGORY_UI[category].accent,
+                          accentBg: SKILL_CATEGORY_UI[category].accentBg,
+                        })),
+                      ]).map((category) => {
+                        const CategoryIcon = category.icon;
+                        const isActive = skillCategoryFilter === category.key;
+                        return (
+                          <button
+                            key={category.key}
+                            type="button"
+                            onClick={() => setSkillCategoryFilter(category.key)}
+                            className={`w-full rounded-[8px] px-[12px] py-[9px] flex items-center gap-[12px] text-left text-[14px] transition-colors ${
+                              isActive ? 'bg-[rgba(10,89,247,0.10)] text-[#0a59f7]' : 'text-[#191919] hover:bg-[#f7f9fc]'
+                            }`}
+                          >
+                            <span
+                              className="shrink-0 flex items-center justify-center"
+                              style={{ color: isActive ? '#0a59f7' : '#191919' }}
+                            >
+                              <CategoryIcon size={16} />
+                            </span>
+                            <span className={`truncate leading-[22px] ${isActive ? 'font-medium' : ''}`}>{category.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 min-w-0 flex flex-col bg-transparent">
+                  <div className="flex-1 min-h-0 overflow-y-auto bg-transparent px-[32px] py-[32px]" style={{ scrollbarWidth: 'thin' }}>
+                    <div className="space-y-[24px]">
+                      {groupedVisibleSkills.map(({ category, items }) => {
+                        const CategoryIcon = SKILL_MARKET_CATEGORIES.includes(category)
+                          ? SKILL_CATEGORY_UI[category].icon
+                          : FolderOpen;
+                        const isCollapsed = collapsedSkillGroups[category];
+
+                        return (
+                          <section key={category} className="rounded-[16px] overflow-hidden bg-white">
+                            <button
+                              type="button"
+                              onClick={() => toggleSkillGroup(category)}
+                              className="w-full bg-transparent border-b border-[rgba(0,0,0,0.08)] px-[16px] py-[16px] flex items-center justify-between text-left"
+                            >
+                              <div className="flex items-center gap-[10px]">
+                                <CategoryIcon size={20} className="text-[#191919]" />
+                                <div className="text-[14px] font-bold leading-[18px] text-black">{category}</div>
+                              </div>
+                              <ChevronRight
+                                size={14}
+                                className={`text-[rgba(25,25,25,0.45)] transition-transform ${isCollapsed ? '-rotate-90' : 'rotate-90'}`}
+                              />
+                            </button>
+
+                            {!isCollapsed && (
+                              <div className="bg-transparent px-[16px] py-[16px] space-y-[12px]">
+                                {items.map((skill) => (
+                                  <div
+                                    key={skill.id}
+                                    onClick={() => {
+                                      setActiveSkillDetailTab('overview');
+                                      setSelectedSkillDetail(skill);
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        setActiveSkillDetailTab('overview');
+                                        setSelectedSkillDetail(skill);
+                                      }
+                                    }}
+                                    className="flex items-center gap-[10px] rounded-[8px] bg-[rgba(44,46,52,0.03)] px-[16px] py-[16px] cursor-pointer transition-colors hover:bg-[rgba(44,46,52,0.06)]"
+                                  >
+                                    <div className="size-[16px] shrink-0 flex items-center justify-center text-[#191919]">
+                                      <FolderOpen size={14} />
+                                    </div>
+
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-[12px] font-medium leading-[18px] text-black">{skill.name}</div>
+                                      <div className="mt-[2px] text-[12px] leading-[18px] text-[rgba(25,25,25,0.7)]">
+                                        {skill.description}
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        toggleSkill(skill.id);
+                                      }}
+                                      className={`w-[32px] h-[20px] rounded-full transition-colors shrink-0 relative ${
+                                        skill.enabled ? 'bg-[#0a59f7]' : 'bg-[#d7dbe4]'
+                                      }`}
+                                      aria-label={`${skill.enabled ? '停用' : '启用'} ${skill.name}`}
+                                    >
+                                      <span
+                                        className={`absolute top-1/2 -translate-y-1/2 size-[12px] rounded-full bg-white transition-all ${
+                                          skill.enabled ? 'left-[18px]' : 'left-[2px]'
+                                        }`}
+                                      />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </section>
+                        );
+                      })}
+
+                      {groupedVisibleSkills.length === 0 && (
+                        <div className="py-16 text-center text-[14px] text-[#999]">
+                          未找到匹配的技能
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}
 
-        {activeNav === 'knowledge_base' && (() => {
-          // ── helpers ──────────────────────────────────────────────────────────
-          const fmtColor: Record<string, string> = {
-            md: '#1476ff', pdf: '#e53935', doc: '#1476ff', docx: '#1476ff',
-            xls: '#2e7d32', xlsx: '#2e7d32', ppt: '#e65100', pptx: '#e65100',
-            txt: '#6b7280', json: '#7c3aed',
-          };
-          const renderDocContent = (sections: Array<{ title: string; content: string }>, snippet: string) => {
-            const allSections = [{ title: '摘要', content: snippet }, ...sections];
-            return allSections.map((sec, si) => {
-              const lines = sec.content.split('\n').filter(Boolean);
-              type Block = { kind: 'text'; text: string } | { kind: 'list'; items: string[] };
-              const blocks: Block[] = [];
-              let currentList: string[] | null = null;
-              lines.forEach((l) => {
-                if (l.startsWith('- ')) {
-                  if (!currentList) { currentList = []; blocks.push({ kind: 'list', items: currentList }); }
-                  currentList.push(l.slice(2));
-                } else {
-                  currentList = null;
-                  blocks.push({ kind: 'text', text: l });
-                }
-              });
-              return (
-                <div key={si} className={si > 0 ? 'mt-[28px]' : ''}>
-                  <h2 className="text-[14px] font-semibold text-[#111] mb-[10px]">{sec.title}</h2>
-                  {blocks.map((b, bi) =>
-                    b.kind === 'list' ? (
-                      <ul key={bi} className="mb-[8px] space-y-[6px]">
-                        {b.items.map((item, ii) => (
-                          <li key={ii} className="flex gap-[10px] text-[14px] leading-[22px] text-[#1a1a1a]">
-                            <span className="mt-[8px] shrink-0 w-[5px] h-[5px] rounded-full bg-[#9ca3af]" />
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p key={bi} className="text-[14px] leading-[24px] text-[#1a1a1a] mb-[8px]">{b.text}</p>
-                    )
-                  )}
-                </div>
-              );
-            });
-          };
-
-          // ── Tab definitions ───────────────────────────────────────────────
-          const KB_TABS: Array<{ key: typeof activeKnowledgeTab; label: string; disabled?: boolean }> = [
-            { key: 'docs', label: '项目文档' },
-            { key: 'images', label: '图片生成' },
-            { key: 'videos', label: '视频生成', disabled: true },
-            { key: 'reports', label: '研究报告', disabled: true },
-          ];
-
-          // ── Filtered gallery images ───────────────────────────────────────
-          const filteredImages = galleryCategory === '全部'
-            ? MOCK_GALLERY_IMAGES
-            : MOCK_GALLERY_IMAGES.filter((img) => img.category === galleryCategory);
-
-          // split into 3 columns for masonry
-          const col0 = filteredImages.filter((_, i) => i % 3 === 0);
-          const col1 = filteredImages.filter((_, i) => i % 3 === 1);
-          const col2 = filteredImages.filter((_, i) => i % 3 === 2);
-
-          const formatLikes = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-
-          return (
-            <div className="h-full flex flex-col bg-transparent">
-              <input ref={knowledgeUploadInputRef} type="file" multiple accept={KNOWLEDGE_UPLOAD_ACCEPT} onChange={handleKnowledgeUpload} className="hidden" />
-
-              <div className="shrink-0 border-b border-[rgba(0,0,0,0.08)] pl-[16px] pr-[40px] pt-[12px] pb-[13px]">
-                <div className="flex items-center gap-[16px] min-h-[44px]">
-                  <div className="relative shrink-0 flex size-[36px] items-center justify-center overflow-hidden rounded-[10px] border border-white/35 bg-white/18 shadow-[inset_0_1px_0_rgba(255,255,255,0.35),0_6px_18px_rgba(148,163,184,0.14)] backdrop-blur-[14px]">
-                    <div
-                      className="absolute inset-[4.17%_11.84%_5.23%_8.33%]"
-                      style={{
-                        WebkitMaskImage: `url('${KNOWLEDGE_MANAGEMENT_ICON_MASK_URL}')`,
-                        maskImage: `url('${KNOWLEDGE_MANAGEMENT_ICON_MASK_URL}')`,
-                        WebkitMaskRepeat: 'no-repeat',
-                        maskRepeat: 'no-repeat',
-                        WebkitMaskPosition: 'center',
-                        maskPosition: 'center',
-                        WebkitMaskSize: 'contain',
-                        maskSize: 'contain',
-                      }}
-                    >
-                      <img alt="" src={KNOWLEDGE_MANAGEMENT_ICON_FILL_URL} className="block h-full w-full max-w-none" />
-                    </div>
-                    <div className="absolute left-[19.5px] top-[13.37px] flex h-[3px] w-[8.06px] items-center justify-center">
-                      <div className="h-[1.1px] w-[8.03px] rotate-[-13.92deg] rounded-[12px] bg-white" />
-                    </div>
-                    <div className="absolute left-[19.5px] top-[18px] flex h-[2.31px] w-[5.37px] items-center justify-center">
-                      <div className="h-[1.07px] w-[5.27px] rotate-[-13.92deg] rounded-[12px] bg-white" />
-                    </div>
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[14px] font-bold leading-[20px] text-black">知识管理</div>
-                    <div className="mt-[4px] text-[12px] leading-[18px] text-[rgba(0,0,0,0.6)]">
-                      上传行业文档与团队资料，构建Agent的专业知识体系
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* ── Tab bar ── */}
-              <div className="shrink-0 flex items-center gap-[4px] px-[20px] border-b border-[rgba(0,0,0,0.08)] h-[44px]">
-                {KB_TABS.map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    disabled={tab.disabled}
-                    onClick={() => !tab.disabled && setActiveKnowledgeTab(tab.key)}
-                    className={`relative h-full px-[12px] text-[14px] transition-colors ${
-                      tab.disabled
-                        ? 'text-[rgba(0,0,0,0.25)] cursor-not-allowed'
-                        : activeKnowledgeTab === tab.key
-                          ? 'text-[#1a1a1a] font-medium'
-                          : 'text-[rgba(0,0,0,0.45)] hover:text-[#1a1a1a]'
-                    }`}
-                  >
-                    {tab.label}
-                    {!tab.disabled && activeKnowledgeTab === tab.key && (
-                      <span className="absolute bottom-0 left-[12px] right-[12px] h-[2px] rounded-t-full bg-[#1476ff]" />
-                    )}
-                    {tab.disabled && (
-                      <span className="ml-[4px] text-[10px] text-[rgba(0,0,0,0.2)]">即将上线</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* ── Tab content ── */}
-              {activeKnowledgeTab === 'docs' && (
-                <div className="flex-1 min-h-0 flex bg-transparent">
-                  {/* Left directory panel */}
-                  <div className="w-[200px] shrink-0 flex flex-col border-r border-[rgba(0,0,0,0.08)] bg-transparent">
-                    <div className="shrink-0 h-[40px] flex items-center px-[12px] justify-between border-b border-[rgba(0,0,0,0.08)]">
-                      <span className="text-[12px] font-semibold text-[#1a1a1a]">文档目录</span>
-                      <div className="flex items-center gap-[2px]">
-                        <button className="w-[20px] h-[20px] flex items-center justify-center rounded-[4px] text-[rgba(0,0,0,0.4)] hover:bg-[rgba(0,0,0,0.06)] hover:text-[#1a1a1a] transition-colors">
-                          <Search size={12} />
-                        </button>
-                        <button
-                          onClick={() => handleKnowledgeUploadClick('领域专业知识')}
-                          className="w-[20px] h-[20px] flex items-center justify-center rounded-[4px] text-[rgba(0,0,0,0.4)] hover:bg-[rgba(0,0,0,0.06)] hover:text-[#1a1a1a] transition-colors"
-                        >
-                          <Plus size={12} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto px-[12px] py-[8px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <div className="flex flex-col gap-[8px]">
-                        {groupedKnowledgeItems.map(({ group, items }) => {
-                          const collapsed = collapsedKnowledgeGroups[group];
-                          return (
-                            <div key={group} className="flex flex-col gap-[4px]">
-                              <button
-                                type="button"
-                                onClick={() => toggleKnowledgeGroupCollapse(group)}
-                                className="w-full flex items-center gap-[4px] px-[12px] py-[8px] rounded-[6px] text-[12px] font-medium text-[rgba(25,25,25,0.45)] hover:bg-[rgba(0,0,0,0.05)] transition-colors"
-                              >
-                                <ChevronRight size={14} className={`text-[rgba(25,25,25,0.35)] transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`} />
-                                <span>{group}</span>
-                              </button>
-                              {!collapsed && (
-                                <div className="flex flex-col gap-[4px]">
-                                  {items.map((item) => {
-                                    const isSelected = selectedKnowledgeItem?.id === item.id;
-                                    const fmt = item.format ?? 'md';
-                                    const dotColor = fmtColor[fmt] ?? '#6b7280';
-                                    return (
-                                      <button
-                                        key={item.id}
-                                        type="button"
-                                        onClick={() => setSelectedKnowledgeId(item.id)}
-                                        className={`w-full flex items-center gap-[6px] pl-[32px] pr-[12px] py-[8px] rounded-[6px] text-left text-[12px] truncate transition-colors ${
-                                          isSelected
-                                            ? 'bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium'
-                                            : 'text-[#191919] hover:bg-[rgba(0,0,0,0.05)]'
-                                        }`}
-                                      >
-                                        <FileText size={14} className="shrink-0" style={{ color: dotColor }} />
-                                        <span className="truncate">{item.title}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right preview panel */}
-                  <div className="flex-1 min-w-0 flex flex-col bg-transparent overflow-hidden">
-                    {selectedKnowledgeItem ? (() => {
-                      const item = selectedKnowledgeItem;
-                      const fmt = item.format ?? 'md';
-                      const fmtBadgeColor = fmtColor[fmt] ?? '#6b7280';
-                      const isEnabled = knowledgeEnabledMap[item.id] ?? true;
-                      return (
-                        <>
-                          <div className="shrink-0 h-[40px] border-b border-[rgba(0,0,0,0.08)] flex items-center px-[16px] gap-[6px]">
-                            <span
-                              className="shrink-0 text-[10px] font-bold px-[4px] py-[1px] rounded"
-                              style={{ color: fmtBadgeColor, background: `${fmtBadgeColor}18` }}
-                            >
-                              {fmt.toUpperCase()}
-                            </span>
-                            <span className="text-[12px] text-[rgba(0,0,0,0.6)] truncate">{item.title}.{fmt}</span>
-                            <div className="ml-auto shrink-0 flex items-center gap-[4px]">
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={isEnabled}
-                                onClick={() => toggleKnowledgeEnabled(item.id)}
-                                className={`relative h-[16px] w-[28px] rounded-full transition-colors mr-[6px] ${isEnabled ? 'bg-[#0a59f7]' : 'bg-[rgba(0,0,0,0.18)]'}`}
-                              >
-                                <span className={`absolute top-1/2 -translate-y-1/2 h-[10px] w-[10px] rounded-full bg-white transition-[left] ${isEnabled ? 'left-[15px]' : 'left-[3px]'}`} />
-                              </button>
-                              <button className="w-[24px] h-[24px] flex items-center justify-center rounded-[4px] text-[rgba(0,0,0,0.3)] hover:bg-[rgba(0,0,0,0.06)] hover:text-[#1a1a1a] transition-colors">
-                                <Eye size={13} />
-                              </button>
-                              <button className="w-[24px] h-[24px] flex items-center justify-center rounded-[4px] text-[rgba(0,0,0,0.3)] hover:bg-[rgba(0,0,0,0.06)] hover:text-[#1a1a1a] transition-colors">
-                                <Copy size={13} />
-                              </button>
-                              <button className="w-[24px] h-[24px] flex items-center justify-center rounded-[4px] text-[rgba(0,0,0,0.3)] hover:bg-[rgba(0,0,0,0.06)] hover:text-[#1a1a1a] transition-colors">
-                                <MoreHorizontal size={13} />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="flex-1 overflow-y-auto [scrollbar-width:thin]">
-                            <div className="mx-[150px] px-[24px] py-[28px]">
-                              <h1 className="text-[16px] font-bold text-[#111] leading-[24px] mb-[8px]">{item.title}</h1>
-                              <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[2px] mb-[20px] pb-[12px] border-b border-[rgba(0,0,0,0.07)]">
-                                {item.owner && <span className="text-[12px] text-[rgba(0,0,0,0.4)]">负责人：{item.owner}</span>}
-                                <span className="text-[12px] text-[rgba(0,0,0,0.4)]">更新：{formatKnowledgeDate(item.updatedAt)}</span>
-                                <span className="text-[12px] text-[rgba(0,0,0,0.4)]">{item.size}</span>
-                                {(item.tags ?? []).map((tag) => (
-                                  <span key={tag} className="text-[10px] text-[rgba(0,0,0,0.4)] bg-[rgba(0,0,0,0.05)] px-[5px] py-[1px] rounded-[3px]">{tag}</span>
-                                ))}
-                              </div>
-                              {renderDocContent(item.sections, item.snippet)}
-                            </div>
-                          </div>
-                        </>
-                      );
-                    })() : (
-                      <div className="flex-1 flex items-center justify-center text-[14px] text-[rgba(0,0,0,0.25)]">
-                        从左侧选择文件预览内容
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {activeKnowledgeTab === 'images' && (
-                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                  {/* category filter bar */}
-                  <div className="shrink-0 flex items-center gap-[6px] px-[20px] py-[10px] border-b border-[rgba(0,0,0,0.06)]">
-                    <div className="flex items-center gap-[6px] overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      {GALLERY_CATEGORIES.map((cat) => (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => setGalleryCategory(cat)}
-                          className={`shrink-0 h-[28px] px-[10px] rounded-full text-[12px] transition-colors ${
-                            galleryCategory === cat
-                              ? 'bg-[#1a1a1a] text-white'
-                              : 'bg-[rgba(0,0,0,0.05)] text-[rgba(0,0,0,0.55)] hover:bg-[rgba(0,0,0,0.09)]'
-                          }`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="ml-auto shrink-0 flex items-center gap-[4px]">
-                      <button className="h-[28px] px-[10px] flex items-center gap-[4px] rounded-full bg-[rgba(20,118,255,0.08)] text-[#1476ff] text-[12px] hover:bg-[rgba(20,118,255,0.14)] transition-colors">
-                        <Plus size={12} />
-                        <span>生成图片</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* masonry grid */}
-                  <div className="flex-1 overflow-y-auto px-[20px] py-[16px] [scrollbar-width:thin]">
-                    <div className="flex gap-[12px]">
-                      {[col0, col1, col2].map((col, ci) => (
-                        <div key={ci} className="flex-1 flex flex-col gap-[12px]">
-                          {col.map((img) => {
-                            const heightClass = img.aspect === 'tall' ? 'h-[240px]' : img.aspect === 'wide' ? 'h-[160px]' : 'h-[200px]';
-                            const isHovered = galleryHoverId === img.id;
-                            return (
-                              <div
-                                key={img.id}
-                                className="relative rounded-[10px] overflow-hidden cursor-pointer group"
-                                style={{ background: img.gradient }}
-                                onMouseEnter={() => setGalleryHoverId(img.id)}
-                                onMouseLeave={() => setGalleryHoverId(null)}
-                              >
-                                <div className={`${heightClass} w-full`} />
-                                {/* subtle noise texture overlay */}
-                                <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=\'0 0 200 200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cfilter id=\'n\'%3E%3CfeTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'4\' stitchTiles=\'stitch\'/%3E%3C/filter%3E%3Crect width=\'100%25\' height=\'100%25\' filter=\'url(%23n)\'/%3E%3C/svg%3E")', backgroundSize: '200px' }} />
-                                {/* hover overlay */}
-                                <div className={`absolute inset-0 bg-[rgba(0,0,0,0.45)] transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`} />
-                                {/* bottom info */}
-                                <div className={`absolute bottom-0 left-0 right-0 p-[10px] transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
-                                  <p className="text-white text-[12px] font-medium leading-[16px] mb-[4px] line-clamp-2">{img.title}</p>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[rgba(255,255,255,0.7)] text-[10px]">{img.author}</span>
-                                    <div className="flex items-center gap-[8px]">
-                                      <span className="flex items-center gap-[3px] text-[rgba(255,255,255,0.7)] text-[10px]">
-                                        <Heart size={10} />
-                                        {formatLikes(img.likes)}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                                {/* category badge always visible */}
-                                <div className="absolute top-[8px] left-[8px]">
-                                  <span className="text-[10px] text-white bg-[rgba(0,0,0,0.35)] backdrop-blur-sm px-[6px] py-[2px] rounded-full">{img.category}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {activeNav === 'knowledge_base' && (
+          <AssetsPanel
+            activeTab={activeKnowledgeTab}
+            onActiveTabChange={setActiveKnowledgeTab}
+            onToast={setToast}
+          />
+        )}
         </main>
       </section>
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f172a] text-white text-[12px] px-4 py-2 rounded-full shadow-[0_10px_30px_rgba(2,6,23,0.25)] z-[680]">
           {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PersonalSkillWorkspace({
+  packages,
+  selectedPackage,
+  selectedFile,
+  viewMode,
+  expandedPackageIds,
+  expandedFolderIds,
+  onTogglePackage,
+  onToggleFolder,
+  onSelectPackage,
+  onSelectFile,
+  onViewModeChange,
+  onContentChange,
+}: {
+  packages: PersonalSkillPackage[];
+  selectedPackage: PersonalSkillPackage | null;
+  selectedFile: PersonalSkillFileNode | null;
+  viewMode: 'preview' | 'edit';
+  expandedPackageIds: Record<string, boolean>;
+  expandedFolderIds: Record<string, boolean>;
+  onTogglePackage: (pkg: PersonalSkillPackage) => void;
+  onToggleFolder: (folderId: string) => void;
+  onSelectPackage: (pkgId: string) => void;
+  onSelectFile: (nodeId: string) => void;
+  onViewModeChange: (mode: 'preview' | 'edit') => void;
+  onContentChange: (nextContent: string) => void;
+}) {
+  return (
+    <div className="flex-1 min-h-0 flex bg-transparent">
+      <aside className="w-[324px] shrink-0 border-r border-[rgba(25,25,25,0.08)] bg-[rgba(255,255,255,0.55)]">
+        <div className="h-full overflow-y-auto px-[16px] py-[20px]" style={{ scrollbarWidth: 'thin' }}>
+          <div className="space-y-[12px]">
+            {packages.map((pkg) => {
+              const isExpanded = expandedPackageIds[pkg.id] ?? pkg.id === selectedPackage?.id;
+              const isSelected = pkg.id === selectedPackage?.id;
+              return (
+                <div key={pkg.id} className="space-y-[4px]">
+                  <button
+                    type="button"
+                    onClick={() => onTogglePackage(pkg)}
+                    className="flex w-full items-center gap-[10px] rounded-[12px] px-[12px] py-[10px] text-left text-[#191919] transition-colors hover:bg-[rgba(10,89,247,0.04)]"
+                  >
+                    <FileText size={16} className="shrink-0 text-[#191919]" />
+                    <span className={`min-w-0 flex-1 truncate text-[14px] leading-[22px] ${isSelected ? 'font-semibold' : 'font-medium'}`}>
+                      {pkg.name}
+                    </span>
+                    <ChevronRight
+                      size={14}
+                      className={`shrink-0 text-[rgba(25,25,25,0.45)] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                  </button>
+
+                  {isExpanded && (
+                    <div className="space-y-[2px] pl-[26px]">
+                      {pkg.nodes.map((node) => (
+                        <PersonalSkillTreeNode
+                          key={node.id}
+                          node={node}
+                          depth={0}
+                          selectedFileId={selectedFile?.id ?? null}
+                          expandedFolderIds={expandedFolderIds}
+                          onToggleFolder={onToggleFolder}
+                          onSelectFile={onSelectFile}
+                          onSelectPackage={() => onSelectPackage(pkg.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {packages.length === 0 && (
+              <div className="rounded-[12px] border border-dashed border-[rgba(25,25,25,0.12)] px-[16px] py-[18px] text-[13px] leading-[22px] text-[rgba(25,25,25,0.55)]">
+                没有匹配的个人技能，试试更换关键词或上传新的技能文件。
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      <section className="flex-1 min-w-0 flex flex-col bg-white">
+        {selectedPackage ? (
+          <>
+            <div className="shrink-0 border-b border-[rgba(25,25,25,0.08)] px-[28px] py-[18px]">
+              <div className="flex items-start justify-between gap-[20px]">
+                <div className="min-w-0 flex items-start gap-[12px]">
+                  <div className="min-w-0">
+                    <div className="text-[18px] font-semibold leading-[28px] text-[#191919]">{selectedPackage.name}</div>
+                    <div className="text-[14px] leading-[22px] text-[rgba(25,25,25,0.72)]">{selectedPackage.summary}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center rounded-[12px] bg-[rgba(25,25,25,0.04)] p-[3px]">
+                  {([
+                    { key: 'preview' as const, label: '预览', icon: Eye },
+                    { key: 'edit' as const, label: '编辑', icon: FileText },
+                  ]).map((item) => {
+                    const Icon = item.icon;
+                    const isActive = viewMode === item.key;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => onViewModeChange(item.key)}
+                        className={`inline-flex h-[32px] items-center gap-[6px] rounded-[10px] px-[12px] text-[13px] transition-colors ${
+                          isActive
+                            ? 'bg-white text-[#191919] shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
+                            : 'text-[rgba(25,25,25,0.55)] hover:text-[#191919]'
+                        }`}
+                      >
+                        <Icon size={14} />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto px-[28px] py-[24px]" style={{ scrollbarWidth: 'thin' }}>
+              {selectedFile ? (
+                viewMode === 'preview' ? (
+                  <div className="max-w-none">
+                    {renderPersonalSkillContent(selectedFile.content, selectedFile.format)}
+                  </div>
+                ) : (
+                  <div className="space-y-[12px]">
+                    <div className="flex items-center gap-[8px] text-[12px] text-[rgba(25,25,25,0.5)]">
+                      <span>{selectedFile.name}</span>
+                      <span>·</span>
+                      <span>自动保存</span>
+                    </div>
+                    <textarea
+                      value={selectedFile.content}
+                      onChange={(event) => onContentChange(event.target.value)}
+                      className="min-h-[720px] w-full resize-none rounded-[16px] border border-[rgba(25,25,25,0.08)] bg-[#fafbfd] px-[18px] py-[16px] font-mono text-[13px] leading-[22px] text-[#191919] outline-none focus:border-[rgba(10,89,247,0.35)] focus:bg-white"
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="rounded-[16px] border border-dashed border-[rgba(25,25,25,0.12)] px-[20px] py-[18px] text-[14px] leading-[24px] text-[rgba(25,25,25,0.55)]">
+                  从左侧选择一个技能文件开始预览。
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-[14px] text-[rgba(25,25,25,0.45)]">
+            还没有个人技能，点击右上角上传开始创建。
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function PersonalSkillTreeNode({
+  node,
+  depth,
+  selectedFileId,
+  expandedFolderIds,
+  onToggleFolder,
+  onSelectFile,
+  onSelectPackage,
+}: {
+  node: PersonalSkillNode;
+  depth: number;
+  selectedFileId: string | null;
+  expandedFolderIds: Record<string, boolean>;
+  onToggleFolder: (folderId: string) => void;
+  onSelectFile: (nodeId: string) => void;
+  onSelectPackage: () => void;
+}) {
+  const paddingLeft = 12 + depth * 18;
+
+  if (node.type === 'file') {
+    const isSelected = node.id === selectedFileId;
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          onSelectPackage();
+          onSelectFile(node.id);
+        }}
+        className={`flex w-full items-center gap-[10px] rounded-[10px] py-[9px] pr-[12px] text-left transition-colors ${
+          isSelected ? 'bg-[rgba(10,89,247,0.10)] text-[#191919]' : 'text-[#191919] hover:bg-[rgba(10,89,247,0.04)]'
+        }`}
+        style={{ paddingLeft }}
+      >
+        <FileText size={15} className={`shrink-0 ${isSelected ? 'text-[#0a59f7]' : 'text-[rgba(25,25,25,0.72)]'}`} />
+        <span className="truncate text-[14px] leading-[22px]">{node.name}</span>
+      </button>
+    );
+  }
+
+  const isExpanded = expandedFolderIds[node.id] ?? false;
+  return (
+    <div className="space-y-[2px]">
+      <button
+        type="button"
+        onClick={() => onToggleFolder(node.id)}
+        className="flex w-full items-center gap-[10px] py-[9px] pr-[12px] text-left text-[#191919] transition-colors hover:bg-[rgba(10,89,247,0.04)] rounded-[10px]"
+        style={{ paddingLeft }}
+      >
+        <FolderOpen size={15} className="shrink-0 text-[rgba(25,25,25,0.72)]" />
+        <span className="min-w-0 flex-1 truncate text-[14px] leading-[22px]">{node.name}</span>
+        <ChevronRight
+          size={14}
+          className={`shrink-0 text-[rgba(25,25,25,0.45)] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+        />
+      </button>
+
+      {isExpanded && (
+        <div className="space-y-[2px]">
+          {node.children.map((child) => (
+            <PersonalSkillTreeNode
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              selectedFileId={selectedFileId}
+              expandedFolderIds={expandedFolderIds}
+              onToggleFolder={onToggleFolder}
+              onSelectFile={onSelectFile}
+              onSelectPackage={onSelectPackage}
+            />
+          ))}
         </div>
       )}
     </div>

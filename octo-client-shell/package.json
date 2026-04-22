@@ -7,7 +7,8 @@
     "dev": "VITE_USE_MOCK=true vite --host 0.0.0.0 --port 3006",
     "dev:mock": "npm run dev",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 4174"
+    "preview": "vite preview --host 0.0.0.0 --port 4174",
+    "export:single-html": "VITE_USE_MOCK=true vite build && node scripts/export-single-html.mjs"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",

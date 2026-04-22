@@ -13,13 +13,14 @@ import {
   Search, BookOpen, Cpu, FolderOpen, Link, Copy,
   MessageSquare, LayoutGrid, FlaskConical, Palette,
   BarChart2, Moon, Code, Hash, AtSign,
-  Globe, MoreHorizontal, UserPlus, History,
+  Globe, MoreHorizontal, UserPlus, History, AlertTriangle, Shield, Lock,
+  Wand2, Scissors, Paintbrush, Expand, Pencil,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { savePublished, saveCollab, pushLiveUpdate, getLiveKey, generateId } from '../features/vibe/storage';
 import { CANVAS_MAP as CANVAS_MAP_SHARED, InteractiveLoginDemo } from '../features/vibe/canvases';
 import { BeamsBackground } from '../features/vibe/BeamsBackground';
-import { INITIAL_SKILLS as INITIAL_SKILLS_DATA, DESIGN_SPECS as DESIGN_SPECS_DATA } from '../features/vibe/mock-data';
+import { INITIAL_SKILLS as INITIAL_SKILLS_DATA, DESIGN_SPECS as DESIGN_SPECS_DATA, PERSONAL_ASSETS, PLATFORM_ASSETS } from '../features/vibe/mock-data';
 import {
   MentionPanel as MentionPanelV2,
   AssetsTab as AssetsTabV2,
@@ -38,6 +39,7 @@ import {
   inferPageName as inferPageNameV2,
   VIEWPORT_SIZES as VIEWPORT_SIZES_V2,
 } from '../features/vibe/utils';
+import type { AssetRecord } from '../features/vibe/types';
 import aiCardImg from '../assets/previews/AI卡片.jpg';
 import controlImg from '../assets/previews/控制台.jpg';
 import home3Img from '../assets/previews/官网首页3.jpg';
@@ -62,6 +64,7 @@ interface Msg {
   role: MsgRole;
   text: string;
   attachments?: Attachment[];
+  referencedAssets?: AssetRecord[];
   pages?: GeneratedPage[];
   thinking?: boolean;
   thinkingLines?: string[];
@@ -104,7 +107,8 @@ interface Skill {
 type RefDrawerItem =
   | { kind: 'doc'; doc: ResearchDoc }
   | { kind: 'component'; name: string }
-  | { kind: 'illustration'; name: string; color: string };
+  | { kind: 'illustration'; name: string; color: string }
+  | { kind: 'asset'; asset: AssetRecord };
 
 // ─── Mock Data ─────────────────────────────────────────────────────────────────
 
@@ -1011,6 +1015,8 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
   }]);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [personalAssets, setPersonalAssets] = useState<AssetRecord[]>(PERSONAL_ASSETS);
+  const [referencedAssets, setReferencedAssets] = useState<AssetRecord[]>([]);
   const [generatedPages, setGeneratedPages] = useState<GeneratedPage[]>(initialPages);
   const [activePage, setActivePage] = useState<GeneratedPage | null>(initialPages[0] ?? null);
   const [zoom, setZoom] = useState(100);
@@ -1181,6 +1187,7 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
     if (!text && attachments.length === 0) return;
     const currentDraft = text;
     const currentAttachments = [...attachments];
+    const currentReferencedAssets = [...referencedAssets];
     if (el) el.innerHTML = '';
     setDraft('');
     setAttachments([]);
@@ -1189,7 +1196,13 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
     const userId = `u-${Date.now()}`;
     const thinkId = `t-${Date.now()}`;
 
-    setMessages(prev => [...prev, { id: userId, role: 'user', text: currentDraft, attachments: currentAttachments.length > 0 ? currentAttachments : undefined }]);
+    setMessages(prev => [...prev, {
+      id: userId,
+      role: 'user',
+      text: currentDraft,
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+      referencedAssets: currentReferencedAssets.length > 0 ? currentReferencedAssets : undefined,
+    }]);
     setMessages(prev => [...prev, { id: thinkId, role: 'ai', text: '', thinking: true }]);
 
     setTimeout(() => {
@@ -1233,15 +1246,21 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
       const attachNote = currentAttachments.length > 0
         ? `\n\n已解析附件：${currentAttachments.map(a => a.name).join('、')}，作为设计参考。`
         : '';
+      const assetNote = currentReferencedAssets.length > 0
+        ? `\n\n已显式引用资产：${currentReferencedAssets.map(asset => asset.citation_label).join('、')}。`
+        : '';
+      const conflictNote = currentReferencedAssets.some(asset => asset.source_type === 'personal' && asset.risk_note)
+        ? '\n已保留个人资产优先的选择，并对潜在平台规范差异进行了标记。'
+        : '';
       const specNote = `（基于「${selectedSpec}」规范生成）`;
 
       setMessages(prev => prev.map(m => m.id === thinkId ? {
         ...m, thinking: false,
-        text: `好的，已根据「${currentDraft || '你的描述'}」${specNote}生成了 ${newPages.length} 个页面方案，可在右侧画布预览。继续描述可进一步调整。${attachNote}`,
+        text: `好的，已根据「${currentDraft || '你的描述'}」${specNote}生成了 ${newPages.length} 个页面方案，可在右侧画布预览。继续描述可进一步调整。${attachNote}${assetNote}${conflictNote}`,
         pages: newPages,
       } : m));
     }, 2000);
-  }, [draft, attachments, selectedSpec]);
+  }, [draft, attachments, referencedAssets, selectedSpec]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (showMention) {
@@ -1265,6 +1284,44 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
     setLeftTab('chat');
     setTimeout(() => inputRef.current?.focus(), 100);
   };
+
+  const handleReferenceAsset = useCallback((asset: AssetRecord) => {
+    setReferencedAssets(prev => prev.some(item => item.asset_id === asset.asset_id) ? prev : [...prev, asset]);
+    setLeftTab('chat');
+    onToast(`已引用${asset.source_type === 'platform' ? '平台' : '个人'}资产：${asset.title}`);
+  }, [onToast]);
+
+  const handleRemoveReferencedAsset = useCallback((assetId: string) => {
+    setReferencedAssets(prev => prev.filter(asset => asset.asset_id !== assetId));
+  }, []);
+
+  const handleUploadAsset = useCallback((fileName: string) => {
+    const dotIndex = fileName.lastIndexOf('.');
+    const rawTitle = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+    const format = dotIndex > 0 ? fileName.slice(dotIndex + 1).toUpperCase() : 'FILE';
+    const newAsset: AssetRecord = {
+      asset_id: `personal-upload-${Date.now()}`,
+      source_type: 'personal',
+      title: rawTitle,
+      asset_type: 'delivery',
+      owner: 'Vivian Chen',
+      format,
+      updated_at: '刚刚',
+      tags: ['本地上传', '交付件', '个人'],
+      summary_for_ai: '刚从本地上传的个人交付件，适合继续作为页面结构、视觉风格和交互细节的上下文输入。',
+      citation_label: `个人资产 · ${rawTitle}`,
+      applicable_scenarios: ['当前任务继续迭代', '交付复用', '局部改版'],
+      preview: { kind: 'canvas', accent: '#f5f3ff', secondary: '#ddd6fe', label: '上传件' },
+      structured_payload: `基于本地上传文件 ${fileName} 继续生成，优先沿用现有结构、视觉层次和已交付的交互路径。`,
+      upload_source: 'local',
+      visibility: 'private',
+      recent: true,
+    };
+
+    setPersonalAssets(prev => [newAsset, ...prev.map(asset => ({ ...asset, recent: false }))]);
+    setReferenceDrawerItem({ kind: 'asset', asset: newAsset });
+    handleReferenceAsset(newAsset);
+  }, [handleReferenceAsset]);
 
   const handleToggleSkill = (id: string) => {
     setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: !s.enabled } : s));
@@ -1290,6 +1347,14 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
       )
     );
   };
+
+  const hasPlatformReference = referencedAssets.some(asset => asset.source_type === 'platform');
+  const personalConflictAsset = referencedAssets.find(asset => asset.source_type === 'personal' && asset.risk_note);
+  const conflictMessage = personalConflictAsset
+    ? hasPlatformReference
+      ? `${personalConflictAsset.title} 可能与平台规范存在差异。系统将按你的显式选择继续生成，并保留来源标识。`
+      : `${personalConflictAsset.title} 属于个人资产，系统将按你的显式选择继续生成。`
+    : null;
 
   return (
     <>
@@ -1401,6 +1466,16 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
                           )}
                           {msg.role === 'user' && (
                             <div className="max-w-[88%] space-y-1.5">
+                              {msg.referencedAssets && msg.referencedAssets.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 justify-end">
+                                  {msg.referencedAssets.map(asset => (
+                                    <div key={asset.asset_id} className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg border ${asset.source_type === 'platform' ? 'bg-[#eff6ff] text-[#1476ff] border-[#dbeafe]' : 'bg-[#faf5ff] text-[#7c3aed] border-[#e9d5ff]'}`}>
+                                      {asset.source_type === 'platform' ? <Shield size={10} /> : <Lock size={10} />}
+                                      {asset.title}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                               {msg.attachments && msg.attachments.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 justify-end">
                                   {msg.attachments.map(att => (
@@ -1442,6 +1517,81 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
                           }}
                           onClose={() => setShowMention(false)}
                         />
+                      )}
+                    </AnimatePresence>
+
+                    <AnimatePresence>
+                      {referencedAssets.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="mb-2.5 rounded-2xl border border-[rgba(25,25,25,0.08)] bg-[#fcfcfd] overflow-hidden"
+                        >
+                          <div className="px-3 py-2.5 border-b border-[rgba(25,25,25,0.06)] flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] font-semibold text-[#555] uppercase tracking-wide">当前会话已引用资产</p>
+                              <p className="text-[10px] text-[#98a2b3] mt-0.5">{referencedAssets.length} 项资产将作为当前 AI 会话的显式上下文</p>
+                            </div>
+                            <button
+                              onClick={() => setLeftTab('assets')}
+                              className="text-[10px] px-2.5 py-1 rounded-lg bg-[#f5f6f7] text-[#555] hover:bg-[#eef2ff] hover:text-[#1476ff] transition-colors"
+                            >
+                              去替换
+                            </button>
+                          </div>
+                          <div className="px-3 py-2.5 space-y-2">
+                            {referencedAssets.map(asset => (
+                              <div key={asset.asset_id} className="flex items-center gap-2 rounded-xl border border-[rgba(25,25,25,0.06)] bg-white px-2.5 py-2">
+                                <div className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 ${asset.source_type === 'platform' ? 'bg-[#eff6ff] text-[#1476ff]' : 'bg-[#faf5ff] text-[#7c3aed]'}`}>
+                                  {asset.source_type === 'platform' ? <Shield size={12} /> : <Lock size={12} />}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <p className="text-[11px] font-medium text-[#191919] truncate">{asset.title}</p>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${asset.source_type === 'platform' ? 'bg-[#eff6ff] text-[#1476ff]' : 'bg-[#faf5ff] text-[#7c3aed]'}`}>
+                                      {asset.source_type === 'platform' ? '平台' : '个人'}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-[#98a2b3] truncate mt-0.5">{asset.summary_for_ai}</p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => setReferenceDrawerItem({ kind: 'asset', asset })}
+                                    className="text-[10px] px-2 py-1 rounded-lg border border-[rgba(25,25,25,0.1)] text-[#555] hover:bg-[#f8fafc] transition-colors"
+                                  >
+                                    查看
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemoveReferencedAsset(asset.asset_id)}
+                                    className="text-[10px] px-2 py-1 rounded-lg bg-[#f5f6f7] text-[#667085] hover:bg-[#fef2f2] hover:text-[#dc2626] transition-colors"
+                                  >
+                                    移除
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <AnimatePresence>
+                      {conflictMessage && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 4 }}
+                          className="mb-2.5 rounded-2xl border border-[#fed7aa] bg-[#fff7ed] px-3 py-2.5"
+                        >
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle size={14} className="text-[#ea580c] shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-[10px] font-semibold text-[#c2410c] uppercase tracking-wide">软提示</p>
+                              <p className="text-[10px] text-[#9a3412] leading-relaxed mt-0.5">{conflictMessage}</p>
+                            </div>
+                          </div>
+                        </motion.div>
                       )}
                     </AnimatePresence>
 
@@ -1508,7 +1658,14 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
 
               {leftTab === 'assets' && (
                 <motion.div key="assets" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }} className="h-full min-h-0">
-                  <AssetsTabV2 onInsert={handleInsertToChat} onOpenItem={setReferenceDrawerItem} />
+                  <AssetsTabV2
+                    platformAssets={PLATFORM_ASSETS}
+                    personalAssets={personalAssets}
+                    referencedAssetIds={referencedAssets.map(asset => asset.asset_id)}
+                    onOpenItem={setReferenceDrawerItem}
+                    onReferenceAsset={handleReferenceAsset}
+                    onUploadAsset={handleUploadAsset}
+                  />
                 </motion.div>
               )}
 
@@ -1624,11 +1781,13 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
                   </button>
                 ))}
               </div>
-              <p className="text-[12px] font-bold text-[#191919] mb-1.5">方案{String.fromCharCode(65 + selectedVariant)}</p>
+              <p className="text-[12px] font-bold text-[#191919] mb-1.5">
+                方案{String.fromCharCode(65 + selectedVariant)}：{['城市公园夜跑', '河边步道晨跑', '社区健身', '滨江跑道'][selectedVariant]}
+              </p>
               <p className="text-[10px] text-[#666] leading-relaxed">
                 {activePage
                   ? `${activePage.name}，AI 基于描述生成的界面方案，可继续迭代调整。`
-                  : '城市公园清晨，年轻人在塑胶跑道上慢跑，阳光透过树叶洒落，背景有晨练的老人和遛狗的人'}
+                  : ['城市公园夜间跑步场景，路灯照明，跑道清晰，运动者剪影', '清晨河边步道，阳光透过树叶，清新自然', '社区户外健身区，活力社区，居民锻炼', '滨江景观跑道，江景优美，沉浸自然'][selectedVariant]}
               </p>
             </div>
 
@@ -1639,8 +1798,8 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
                 {([
                   ['模型', '图片5.0 Lite'],
                   ['比例', '16:9'],
-                  ['分辨率', '2K'],
-                  ['时间', '8秒'],
+                  ['分辨率', '1920x1080'],
+                  ['时间', '2026-04-01 16:45'],
                 ] as [string, string][]).map(([label, value]) => (
                   <div key={label} className="flex items-center justify-between">
                     <span className="text-[10px] text-[#999]">{label}</span>
@@ -1654,7 +1813,7 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
             <div>
               <p className="text-[12px] font-semibold text-[#191919] mb-1.5">提示词</p>
               <p className="text-[10px] text-[#666] leading-relaxed">
-                {activePage ? activePage.name : '城市慢跑、生活化场景、真实感、运动健康'}
+                {activePage ? activePage.name : '生成运动主题氛围图：城市公园夜跑、河边步道晨跑、社区健身、滨江跑道。生活化真实场景，高清摄影风格'}
               </p>
             </div>
 
@@ -1668,19 +1827,29 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
                 <Sparkles size={14} />
                 再次生成
               </button>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { icon: Wand2, label: '变清晰' },
+                  { icon: Scissors, label: '抠图' },
+                  { icon: Paintbrush, label: '局部重绘' },
+                  { icon: Expand, label: '扩图' },
+                ] as { icon: React.FC<{ size?: number; className?: string }>; label: string }[]).map(({ icon: Icon, label }) => (
+                  <button
+                    key={label}
+                    onClick={() => onToast(`${label}功能即将上线`)}
+                    className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[#444] text-[12px] border border-[rgba(25,25,25,0.12)] bg-white/50 hover:bg-white/80 transition-colors active:scale-[0.98]"
+                  >
+                    <Icon size={13} className="text-[#666]" />
+                    {label}
+                  </button>
+                ))}
+              </div>
               <button
-                onClick={() => onToast('调整参数功能即将上线')}
+                onClick={() => onToast('在线编辑功能即将上线')}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[#444] text-[12px] border border-[rgba(25,25,25,0.12)] bg-white/50 hover:bg-white/80 transition-colors active:scale-[0.98]"
               >
-                <LayoutGrid size={14} className="text-[#666]" />
-                调整参数
-              </button>
-              <button
-                onClick={() => onToast('图生图功能即将上线')}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[#444] text-[12px] border border-[rgba(25,25,25,0.12)] bg-white/50 hover:bg-white/80 transition-colors active:scale-[0.98]"
-              >
-                <ImageIcon size={14} className="text-[#666]" />
-                图生图
+                <Pencil size={13} className="text-[#666]" />
+                在线编辑
               </button>
             </div>
 
@@ -1688,10 +1857,10 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
             <div>
               <p className="text-[12px] font-semibold text-[#191919] mb-2">风格标签</p>
               <div className="flex flex-wrap gap-1.5">
-                {['城市', '运动', '生活', '健康'].map((tag, i) => (
+                {['运动', '氛围图', '摄影风格'].map((tag) => (
                   <span
                     key={tag}
-                    className={`text-[10px] px-2.5 py-1 rounded-full border cursor-default select-none transition-colors ${i < 2 ? 'border-[#7C3AED] text-[#7C3AED] bg-[#f5f0ff]' : 'border-[rgba(25,25,25,0.15)] text-[#666] bg-white/50'}`}
+                    className="text-[10px] px-2.5 py-1 rounded-full border cursor-default select-none border-[#7C3AED] text-[#7C3AED] bg-[#f5f0ff]"
                   >
                     {tag}
                   </span>
@@ -1784,7 +1953,8 @@ export const VibeDesign: React.FC<VibeDesignProps> = ({
           <ReferenceDrawer
             item={referenceDrawerItem}
             onClose={() => setReferenceDrawerItem(null)}
-            onInsert={handleInsertToChat}
+            onInsertText={handleInsertToChat}
+            onReferenceAsset={handleReferenceAsset}
           />
         )}
       </AnimatePresence>
