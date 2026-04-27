@@ -129,22 +129,27 @@ export async function generateDemoStream(
   const { onThinkingLine, onContent, onDone, onError } = callbacks;
 
   if (USE_MOCK) {
-    const thinking = ['Mock: 解析设计需求', 'Mock: 规划页面结构', 'Mock: 生成交互组件'];
-    for (const line of thinking) {
+    const topic = prompt.slice(0, 40).trim() || 'Demo';
+    const thinking = [
+      `phase|1|意图理解`,
+      `thought|3|解析需求「${topic}」，判断目标页面结构与交互复杂度，规划生成策略。`,
+      `phase|2|思考规划`,
+      `thought|2|拆解页面流向：首页 → 详情 → 操作确认 → 结果反馈。切换动效 slide-left 300ms ease-out，设备宽度 375px。`,
+      `phase|3|工具调用`,
+      `tool|Figma MCP|getFrames · query="${topic}" → 解析 5 个 Frame，识别 23 个可点击热区`,
+      `tool|Octo Renderer|compileInteractive · transitions=slide · device=mobile → bundle 38.4kb，结构校验通过`,
+      `phase|4|结果生成`,
+      `thought|2|注入滚动物理参数 friction=0.92，点击反馈 scale=0.96。渲染首帧完成，布局对齐检查通过，输出可交互 Demo。`,
+    ];
+    const delays = [300, 800, 500, 900, 500, 700, 700, 500, 900];
+    for (let i = 0; i < thinking.length; i++) {
       if (signal?.aborted) return;
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, delays[i] ?? 500));
       if (signal?.aborted) return;
-      onThinkingLine?.(line);
+      onThinkingLine?.(thinking[i]);
     }
     if (signal?.aborted) return;
-    await new Promise(r => setTimeout(r, 300));
-    if (signal?.aborted) return;
-    const chunks = [MOCK_HTML.slice(0, 200), MOCK_HTML.slice(200, 500), MOCK_HTML.slice(500)];
-    for (const chunk of chunks) {
-      if (signal?.aborted) return;
-      await new Promise(r => setTimeout(r, 150));
-      onContent?.(chunk);
-    }
+    await new Promise(r => setTimeout(r, 400));
     onDone?.(MOCK_HTML);
     return;
   }
@@ -158,7 +163,12 @@ export async function generateDemoStream(
       signal,
     });
   } catch (err) {
-    onError?.((err as Error).message || '网络连接失败，请检查后端服务是否运行');
+    const raw = (err as Error).message || '';
+    const isNetworkErr = raw === 'Failed to fetch' || raw.includes('fetch') || raw.includes('network');
+    const hint = isNetworkErr
+      ? `无法连接后端服务（${API_BASE}）。请确认服务已启动，或检查是否存在跨域 / HTTPS 混合内容限制。`
+      : raw || '网络连接失败';
+    onError?.(hint);
     return;
   }
 

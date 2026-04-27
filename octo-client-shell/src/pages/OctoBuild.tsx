@@ -87,6 +87,7 @@ interface CanvaState {
   firstFrameName?: string | null;
   lastFrameName?: string | null;
   updatedAt: number;
+  editEntry?: 'direct' | 'result';
 }
 
 interface CanvaSubmissionPayload {
@@ -105,6 +106,7 @@ interface CanvaSubmissionPayload {
   firstFrameName?: string | null;
   lastFrameName?: string | null;
   requiresUpload?: boolean;
+  editEntry?: 'direct' | 'result';
 }
 
 // ─── 意图识别引擎 ─────────────────────────────────────────────────────────────
@@ -223,6 +225,8 @@ export interface ChatMsg {
   artifactLabel?: string;
   artifactMeta?: string;
   imageOptions?: string[];
+  actionType?: 'upload-image' | 'open-editor';
+  actionLabel?: string;
 }
 
 export interface OctoBuildState {
@@ -412,6 +416,7 @@ function buildCanvaState(payload: CanvaSubmissionPayload): CanvaState {
     firstFrameName: payload.firstFrameName ?? null,
     lastFrameName: payload.lastFrameName ?? null,
     updatedAt: Date.now(),
+    editEntry: payload.editEntry,
   };
 }
 
@@ -427,9 +432,9 @@ function getCanvaArtifactMeta(canvaState: CanvaState | CanvaSubmissionPayload | 
     };
   }
 
-  if (canvaState.mode === 'edit') {
+    if (canvaState.mode === 'edit') {
     return {
-      label: `${getCanvaEditToolLabel(canvaState.editTool)}编辑结果`,
+      label: `${getCanvaEditToolLabel(canvaState.editTool)} - 编辑`,
       meta: `Octo Canvas · 修图工作台${canvaState.attachmentNames.length > 0 ? ` · ${canvaState.attachmentNames.length} 张图片` : ''}`,
     };
   }
@@ -501,10 +506,10 @@ function getCanvaReplyText(payload: CanvaSubmissionPayload): string {
 
   if (payload.mode === 'edit') {
     if (payload.requiresUpload) {
-      return `已切换到 ${getCanvaEditToolLabel(payload.editTool)}。\n\n请先上传需要处理的图片，我会在右侧结果区打开修图工作台。`;
+      return '请上传图片';
     }
 
-    return `已完成 ${getCanvaEditToolLabel(payload.editTool)} 处理：\n\n· 已保留主体构图和内容语义\n· 右侧可查看编辑前后对比\n· 继续输入新的要求可迭代这一版结果`;
+    return `正在使用${getCanvaEditToolLabel(payload.editTool)}功能处理图片，请稍候…`;
   }
 
   return `创意图片已生成：\n\n· 模型：${payload.imageModel}\n· 画幅：${payload.imageRatio}\n· 清晰度：${payload.imageQuality}\n${payload.referenceImageName ? `· 参考图：${payload.referenceImageName}\n` : ''}\n右侧结果页签已切换到图片预览。`;
@@ -2460,7 +2465,7 @@ function CreativeCanvas({
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [showEnhanceEditor, setShowEnhanceEditor] = useState(false);
+  const [activeEditOverlay, setActiveEditOverlay] = useState<{ tool: CanvaEditTool; allowExit: boolean } | null>(null);
   const [enhanceQuality, setEnhanceQuality] = useState<'8k' | '4k' | '2k'>('8k');
   const state = canvaState ?? DEFAULT_CANVA_STATE;
   const media = state.mode === 'video'
@@ -2491,9 +2496,26 @@ function CreativeCanvas({
   };
 
   const handleEnhanceGenerate = () => {
-    onToast?.(`已应用${enhanceQuality.toUpperCase()}清晰增强`);
-    setShowEnhanceEditor(false);
+    const toolLabel = getCanvaEditToolLabel(activeEditOverlay?.tool ?? 'enhance');
+    onToast?.(`已应用${toolLabel}处理（${enhanceQuality.toUpperCase()}）`);
   };
+
+  useEffect(() => {
+    const onOpenEditor = (event: Event) => {
+      const customEvent = event as CustomEvent<{ entry?: 'direct' | 'result' }>;
+      const entry = customEvent.detail?.entry ?? 'direct';
+      const tool = (state.editTool ?? 'enhance') as CanvaEditTool;
+      setActiveEditOverlay({ tool, allowExit: entry !== 'direct' });
+    };
+    window.addEventListener('octo-open-creative-editor', onOpenEditor as EventListener);
+    return () => window.removeEventListener('octo-open-creative-editor', onOpenEditor as EventListener);
+  }, [state.editTool]);
+
+  useEffect(() => {
+    if (state.mode === 'edit' && state.status === 'ready' && state.editEntry === 'direct') {
+      setActiveEditOverlay({ tool: (state.editTool ?? 'enhance') as CanvaEditTool, allowExit: false });
+    }
+  }, [state.editEntry, state.editTool, state.mode, state.status]);
 
   const renderStage = () => {
     if (!canvaState || canvaState.status === 'idle') {
@@ -2711,11 +2733,14 @@ function CreativeCanvas({
                 <button
                   key={label}
                   onClick={() => {
-                    if (label === '变清晰') {
-                      setShowEnhanceEditor(true);
-                      return;
-                    }
-                    onToast?.(`${label}功能即将上线`);
+                    const toolMap: Record<string, CanvaEditTool> = {
+                      变清晰: 'enhance',
+                      抠图: 'remove-bg',
+                      局部重绘: 'inpaint',
+                      扩图: 'outpaint',
+                    };
+                    const tool = toolMap[label];
+                    if (tool) setActiveEditOverlay({ tool, allowExit: true });
                   }}
                   className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[#374151] text-[12px] border border-[rgba(25,25,25,0.1)] bg-[#f7f8fa] hover:bg-[#eceef2] transition-colors active:scale-[0.98]"
                 >
@@ -2764,7 +2789,7 @@ function CreativeCanvas({
       </div>
 
       <AnimatePresence>
-        {showEnhanceEditor && (
+        {activeEditOverlay && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -2777,7 +2802,7 @@ function CreativeCanvas({
                 <div className="flex items-center gap-3">
                   <div className="h-9 px-3 rounded-[10px] bg-[#252a55] inline-flex items-center gap-2 text-[16px] font-semibold">
                     <Wand2 size={16} />
-                    变清晰
+                    {getCanvaEditToolLabel(activeEditOverlay.tool)}
                   </div>
                   <span className="text-[12px] text-white/70">画质提升 · 基于原图快速超分放大</span>
                 </div>
@@ -2800,12 +2825,14 @@ function CreativeCanvas({
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-white/80 text-[14px]">100%</div>
-                  <button
-                    onClick={() => setShowEnhanceEditor(false)}
-                    className="w-8 h-8 rounded-md hover:bg-white/10 text-white/80 hover:text-white inline-flex items-center justify-center"
-                  >
-                    <X size={18} />
-                  </button>
+                  {activeEditOverlay.allowExit && (
+                    <button
+                      onClick={() => setActiveEditOverlay(null)}
+                      className="w-8 h-8 rounded-md hover:bg-white/10 text-white/80 hover:text-white inline-flex items-center justify-center"
+                    >
+                      <X size={18} />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -2841,12 +2868,14 @@ function CreativeCanvas({
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setShowEnhanceEditor(false)}
-                    className="h-11 px-8 rounded-[14px] border border-white/20 text-white/85 text-[20px] hover:bg-white/10 transition-colors"
-                  >
-                    取消
-                  </button>
+                  {activeEditOverlay.allowExit && (
+                    <button
+                      onClick={() => setActiveEditOverlay(null)}
+                      className="h-11 px-8 rounded-[14px] border border-white/20 text-white/85 text-[20px] hover:bg-white/10 transition-colors"
+                    >
+                      取消
+                    </button>
+                  )}
                   <button
                     onClick={handleEnhanceGenerate}
                     className="h-11 px-8 rounded-[14px] text-white text-[20px] font-medium transition-transform active:scale-[0.98]"
@@ -4789,6 +4818,7 @@ function ChatComposer({
   linkedPrototypeComponents,
   selectedPrototypeComponentIds,
   onTogglePrototypeComponent,
+  canvaState,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -4800,6 +4830,7 @@ function ChatComposer({
   linkedPrototypeComponents: LinkedPrototypeComponent[];
   selectedPrototypeComponentIds: string[];
   onTogglePrototypeComponent: (componentId: string) => void;
+  canvaState?: CanvaState | null;
 }) {
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
@@ -4855,12 +4886,27 @@ function ChatComposer({
   const [assetMentionCategoryFilter, setAssetMentionCategoryFilter] = useState<string | null>(null);
   const [assetMentionTrigger, setAssetMentionTrigger] = useState<{ start: number; end: number; query: string } | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [isAwaitingCreativeEditUpload, setIsAwaitingCreativeEditUpload] = useState(false);
 
   useEffect(() => {
     if (!DESIGN_OPTIONS.includes(designOption)) {
       setDesignOption(DESIGN_OPTIONS[0]);
     }
   }, [designOption]);
+
+  useEffect(() => {
+    if (agent !== 'creative' || creativeType !== 'edit') {
+      setIsAwaitingCreativeEditUpload(false);
+    }
+  }, [agent, creativeType]);
+
+  useEffect(() => {
+    const handleExternalUploadRequest = () => {
+      uploadInputRef.current?.click();
+    };
+    window.addEventListener('octo-request-upload-image', handleExternalUploadRequest);
+    return () => window.removeEventListener('octo-request-upload-image', handleExternalUploadRequest);
+  }, []);
   const agentMenuRef = useRef<HTMLDivElement>(null);
   const insertMenuRef = useRef<HTMLDivElement>(null);
   const insertMenuLayerRef = useRef<HTMLDivElement>(null);
@@ -5032,6 +5078,23 @@ function ChatComposer({
     setAttachments(prev => [...prev, ...nextUploads].slice(0, 8));
     event.target.value = '';
     closeInsertMenu();
+
+    const hasImageUpload = nextUploads.some((item) => item.type === 'image');
+    const isAwaitingEditUpload = agent === 'creative'
+      && creativeType === 'edit'
+      && isAwaitingCreativeEditUpload;
+    if (hasImageUpload && isAwaitingEditUpload) {
+      const autoPrompt = `[图片x${nextUploads.filter((item) => item.type === 'image').length}] [AI修图] 请帮我处理这张图片`;
+      const payload = buildCreativePayload({
+        mode: 'edit',
+        editTool: selectedEditTool,
+        prompt: autoPrompt,
+        requiresUpload: false,
+        editEntry: 'direct',
+      });
+      onSend(autoPrompt, { creativePayload: payload });
+      setIsAwaitingCreativeEditUpload(false);
+    }
   };
 
   const handleDesignImportConfirm = useCallback(() => {
@@ -5357,34 +5420,20 @@ function ChatComposer({
     if (kind === 'last') setLastFrameName(file.name);
   }, []);
 
-  const handleCreativeToolCardClick = useCallback((tool: CanvaEditTool) => {
+  const handleTriggerCreativeEditTool = useCallback((tool: CanvaEditTool) => {
     setCreativeType('edit');
     setSelectedEditTool(tool);
-    const mentionContext = selectedAssetMentions.length > 0
-      ? [
-        '【引用资产】',
-        ...selectedAssetMentions.map((item, index) => [
-          `${index + 1}. ${item.name}`,
-          `来源：${item.pathLabel} / ${item.categoryLabel}`,
-          item.content,
-        ].join('\n')),
-      ].join('\n\n')
-      : '';
-    const basePrompt = draft.trim() || `使用${getCanvaEditToolLabel(tool)}处理图片`;
+    setIsAwaitingCreativeEditUpload(true);
+    const prompt = `使用${getCanvaEditToolLabel(tool)}功能`;
     const payload = buildCreativePayload({
       mode: 'edit',
       editTool: tool,
-      prompt: [basePrompt, mentionContext].filter(Boolean).join('\n\n'),
-      requiresUpload: attachments.filter((item) => item.type === 'image').length === 0,
+      prompt,
+      requiresUpload: true,
+      editEntry: 'direct',
     });
-    onSend(payload.prompt, { creativePayload: payload });
-    if (!payload.requiresUpload) {
-      setDraft('');
-      setSelectedSkills([]);
-      setSelectedAssetMentions([]);
-      resetCreativeInputs();
-    }
-  }, [attachments, buildCreativePayload, draft, onSend, resetCreativeInputs, selectedAssetMentions]);
+    onSend(prompt, { creativePayload: payload });
+  }, [buildCreativePayload, onSend]);
 
   const handleSubmit = useCallback(() => {
     const content = draft.trim();
@@ -5423,7 +5472,9 @@ function ChatComposer({
       const creativePayload = buildCreativePayload({
         prompt: creativePrompt,
         requiresUpload: creativeType === 'edit' && imageAttachments.length === 0,
+        editEntry: creativeType === 'edit' ? 'direct' : undefined,
       });
+      setIsAwaitingCreativeEditUpload(Boolean(creativePayload.requiresUpload));
       onSend(creativePrompt, { creativePayload });
       setDraft('');
       setSelectedSkills([]);
@@ -5588,33 +5639,6 @@ function ChatComposer({
             ))}
           </div>
         )}
-        {agent === 'creative' && creativeType === 'edit' && (
-          <div className="relative z-[1] mx-4 mt-3 mb-1 grid grid-cols-2 overflow-hidden rounded-[14px] border border-[rgba(25,25,25,0.08)] bg-white">
-            {CANVA_EDIT_TOOL_OPTIONS.map((tool, index) => {
-              const isActive = selectedEditTool === tool.id;
-              const isRight = index % 2 === 1;
-              const isBottom = index >= 2;
-              return (
-                <button
-                  key={tool.id}
-                  type="button"
-                  onClick={() => handleCreativeToolCardClick(tool.id)}
-                  className={`px-3 py-3 text-left transition-colors ${
-                    isActive ? 'bg-[#f8fbff]' : 'hover:bg-[#fafafa]'
-                  } ${!isRight ? 'border-r border-[rgba(25,25,25,0.08)]' : ''} ${isBottom ? 'border-t border-[rgba(25,25,25,0.08)]' : ''}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-[10px] flex items-center justify-center" style={{ backgroundColor: tool.bg, color: tool.color }}>
-                      <tool.Icon size={14} />
-                    </span>
-                    <span className="text-[12px] font-medium text-[#191919]">{tool.label}</span>
-                  </div>
-                  <div className="mt-1 text-[10px] text-[#888] leading-[1.5]">{tool.description}</div>
-                </button>
-              );
-            })}
-          </div>
-        )}
         {agent === 'creative' && creativeType === 'video' && (
           <div className="relative z-[1] mx-4 mt-3 mb-1 grid grid-cols-2 gap-2">
             {[
@@ -5644,11 +5668,11 @@ function ChatComposer({
           </div>
         )}
         <div className="relative z-[1] px-3 pt-2.5 pb-1.5 h-[133px]">
-          <div className="flex flex-wrap content-start items-start gap-1.5 h-full overflow-y-auto pr-1">
+          <div className="flex flex-wrap content-start items-start gap-1.5 h-full overflow-y-auto overflow-x-hidden pr-1">
             {selectedSkills.map(skill => (
               <div
                 key={skill.id}
-                className="h-7 max-w-full rounded-[10px] bg-[#f5ecff] text-[#7c3aed] px-1 inline-flex items-center gap-1"
+                className="h-7 shrink-0 max-w-[220px] rounded-[10px] bg-[#f5ecff] text-[#7c3aed] px-1 inline-flex items-center gap-1"
               >
                 <Layers size={12} />
                 <span className="text-[10px] font-medium truncate leading-none">{skill.name}</span>
@@ -5657,7 +5681,7 @@ function ChatComposer({
             {selectedAssetMentions.map(asset => (
               <div
                 key={asset.id}
-                className="h-7 max-w-full rounded-[10px] bg-[#f5ecff] text-[#7c3aed] px-1 inline-flex items-center gap-1"
+                className="h-7 shrink-0 max-w-[220px] rounded-[10px] bg-[#f5ecff] text-[#7c3aed] px-1 inline-flex items-center gap-1"
               >
                 <Layers size={12} />
                 <span className="text-[10px] font-medium truncate leading-none">{asset.name}</span>
@@ -5775,7 +5799,7 @@ function ChatComposer({
                             : '描述图片主体、风格、构图和氛围，可附带参考图...')
                         : '描述你想生成的内容，输入 / 唤起技能，或通过 + 上传文件...'}
               wrap="soft"
-              className="min-w-0 flex-[1_1_220px] h-auto min-h-[28px] max-h-full self-auto bg-transparent text-[12px] text-[#191919] outline-none leading-[1.7] py-0.5 resize-none overflow-auto whitespace-pre-wrap break-words placeholder:text-[rgba(25,25,25,0.5)]"
+              className="min-w-0 w-full flex-[1_1_240px] h-auto min-h-[28px] max-h-full self-auto bg-transparent text-[12px] text-[#191919] outline-none leading-[1.7] py-0.5 resize-none overflow-auto break-words placeholder:text-[rgba(25,25,25,0.5)]"
             />
           </div>
 
@@ -5976,7 +6000,7 @@ function ChatComposer({
 
                             {CANVA_TYPE_OPTIONS.map((option) => {
                               const IconComp = option.Icon;
-                              const active = creativeType === option.id;
+                              const active = option.id === 'edit' ? false : creativeType === option.id;
                               return (
                                 <button
                                   key={option.id}
@@ -6005,8 +6029,7 @@ function ChatComposer({
                                   key={item.id}
                                   type="button"
                                   onClick={() => {
-                                    setCreativeType('edit');
-                                    setSelectedEditTool(item.id);
+                                    handleTriggerCreativeEditTool(item.id);
                                     setShowCreativeMediaMenu(false);
                                   }}
                                   className={`w-full px-3 py-2.5 text-left flex items-center gap-2 text-[12px] font-medium transition-colors ${
@@ -7080,7 +7103,7 @@ function ChatPanel({
             onGeneratedHtml?.(html);
             updateMsgs(prev => prev.map(m =>
               m.id === aiId
-                ? { ...m, text: `Demo 已生成完成。你可以在右侧预览，也可以点击「代码」查看完整源码。`, thinkingDone: true, canvasType: wf }
+                ? { ...m, text: `可交互 Demo 已生成：\n\n· 真实设备滚动与手势体验\n· 页面切换过渡动效\n· 按钮点击与状态反馈\n\n点击右侧画布内的 ▶ 播放自动演示。`, thinkingDone: true, canvasType: wf }
                 : m
             ));
             onWorkflowReadyRef.current(wf);
@@ -7153,17 +7176,36 @@ function ChatPanel({
 
     if (resolvedMode === 'creative' && resolvedCreativePayload) {
       const wf: WorkflowType = 'creative';
-      const isNew = !deliverables.includes(wf);
-      onWorkflowActivated(wf, isNew);
       const payload = resolvedCreativePayload;
       const nextCanvaState = buildCanvaState(payload);
       const artifact = getCanvaArtifactMeta(nextCanvaState);
       const userId = `u-${Date.now()}`;
       const aiId = `a-${Date.now()}`;
-
-      onCanvaStateChange(nextCanvaState);
+      const shouldDeferWorkspaceOpen = payload.mode === 'edit' && payload.requiresUpload;
+      if (!shouldDeferWorkspaceOpen) {
+        const isNew = !deliverables.includes(wf);
+        onWorkflowActivated(wf, isNew);
+        onCanvaStateChange(nextCanvaState);
+      }
 
       if (payload.requiresUpload) {
+        updateMsgs(prev => [
+          ...prev,
+          { id: userId, role: 'user', text: content },
+          {
+            id: aiId,
+            role: 'ai',
+            text: '请上传图片',
+            thinkingDone: true,
+            isUpdate: msgs.length > 0,
+            actionType: 'upload-image',
+            actionLabel: '上传图片',
+          },
+        ]);
+        return;
+      }
+
+      if (payload.mode === 'edit') {
         updateMsgs(prev => [
           ...prev,
           { id: userId, role: 'user', text: content },
@@ -7176,6 +7218,8 @@ function ChatPanel({
             artifactLabel: artifact.label,
             artifactMeta: artifact.meta,
             isUpdate: msgs.length > 0,
+            actionType: 'open-editor',
+            actionLabel: '右侧区域编辑',
           },
         ]);
         onWorkflowReadyRef.current(wf);
@@ -7280,6 +7324,15 @@ function ChatPanel({
     timeoutsRef.current.push(doneTid);
   }, [draft, mode, figmaData, deliverables, onWorkflowActivated, onStartConversation, onCanvaStateChange, msgs.length, runRealAiDemo, updateMsgs, canvaState, buildDemoPrompt]);
 
+  const handleRequestUploadImage = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('octo-request-upload-image'));
+  }, []);
+
+  const handleOpenCreativeEditor = useCallback(() => {
+    onFileOpen?.('creative');
+    window.dispatchEvent(new CustomEvent('octo-open-creative-editor', { detail: { entry: 'direct' } }));
+  }, [onFileOpen]);
+
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-transparent">
       <style>{`
@@ -7329,6 +7382,26 @@ function ChatPanel({
                       )}
                       <div>
                         <p className="text-[14px] text-[#333] leading-[20px] whitespace-pre-wrap"><StreamedText text={msg.text} msgId={msg.id} /></p>
+                        {msg.actionType === 'upload-image' && (
+                          <button
+                            type="button"
+                            onClick={handleRequestUploadImage}
+                            className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full text-[13px] font-medium text-white bg-[linear-gradient(135deg,#8b5cf6_0%,#6366f1_100%)] hover:opacity-90 active:scale-[0.98]"
+                          >
+                            <Upload size={14} />
+                            {msg.actionLabel ?? '上传图片'}
+                          </button>
+                        )}
+                        {msg.actionType === 'open-editor' && (
+                          <button
+                            type="button"
+                            onClick={handleOpenCreativeEditor}
+                            className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-medium text-[#7c5cff] bg-[#ede9fe] hover:bg-[#e5ddff] transition-colors"
+                          >
+                            右侧区域编辑
+                            <ChevronRight size={14} />
+                          </button>
+                        )}
                         {msg.imageOptions && msg.imageOptions.length > 0 && (
                           <div className="mt-3">
                             <div className="grid grid-cols-2 gap-1.5 mb-3">
@@ -7359,7 +7432,7 @@ function ChatPanel({
                             </button>
                           </div>
                         )}
-                        {!msg.imageOptions && msg.canvasType && (() => {
+                        {!msg.imageOptions && msg.canvasType && !msg.actionType && (() => {
                           const art = WORKFLOW_ARTIFACTS[msg.canvasType];
                           const ArtIcon = art.Icon;
                           const now = new Date();
@@ -7466,6 +7539,7 @@ function ChatPanel({
         onSend={handleSend}
         activeWorkflow={activeWorkflow}
         setMode={setMode}
+        canvaState={canvaState}
         figmaData={figmaData}
         onFigmaData={onFigmaData}
         linkedPrototypeComponents={linkedPrototypeComponents}
