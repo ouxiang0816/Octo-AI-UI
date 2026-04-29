@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { MessageSquarePlus, Settings } from 'lucide-react';
+import { MessageSquarePlus, Settings, X } from 'lucide-react';
 import { OctoBuild, type OctoBuildState } from './OctoBuild';
 import unionIcon from '../assets/icons/union.svg';
 
@@ -8,6 +8,7 @@ interface StudioSession {
   id: string;
   title: string;
   updatedAt: number;
+  isDraft: boolean;
   state: OctoBuildState;
 }
 
@@ -20,7 +21,7 @@ function createEmptyState(): OctoBuildState {
 }
 
 function createSession(title = '新建创作'): StudioSession {
-  return { id: makeId('studio'), title, updatedAt: Date.now(), state: createEmptyState() };
+  return { id: makeId('studio'), title, updatedAt: Date.now(), isDraft: true, state: createEmptyState() };
 }
 
 // ─── Studio Sidebar ────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ function StudioSidebar({
   activeId,
   onSelect,
   onNewSession,
+  onDelete,
 }: {
   isCollapsed: boolean;
   onCollapse: () => void;
@@ -38,8 +40,11 @@ function StudioSidebar({
   activeId: string;
   onSelect: (id: string) => void;
   onNewSession: () => void;
+  onDelete: (id: string) => void;
 }) {
-  const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+  const history = [...sessions]
+    .filter(s => !s.isDraft)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
     <aside
@@ -78,24 +83,36 @@ function StudioSidebar({
           <div className="text-[11px] font-medium text-[rgba(25,25,25,0.42)] tracking-wide px-[10px] py-[4px] select-none">
             历史记录
           </div>
-          <div className="flex flex-col gap-[2px]">
-            {sorted.map(session => {
-              const isActive = session.id === activeId;
-              return (
-                <button
-                  key={session.id}
-                  onClick={() => onSelect(session.id)}
-                  className={`w-full text-left px-[10px] py-[7px] rounded-[7px] text-[13px] leading-[18px] transition-colors ${
-                    isActive
-                      ? 'bg-[rgba(20,118,255,0.10)] text-[#1476ff]'
-                      : 'text-[#333] hover:bg-[rgba(0,0,0,0.05)]'
-                  }`}
-                >
-                  <span className="block truncate">{session.title}</span>
-                </button>
-              );
-            })}
-          </div>
+          {history.length === 0 ? (
+            <div className="px-[10px] py-[4px] text-[12px] text-[rgba(25,25,25,0.38)]">暂无创作记录</div>
+          ) : (
+            <div className="flex flex-col gap-[2px]">
+              {history.map(session => {
+                const isActive = session.id === activeId;
+                return (
+                  <div key={session.id} className="group relative">
+                    <button
+                      onClick={() => onSelect(session.id)}
+                      className={`w-full text-left px-[10px] py-[7px] pr-[28px] rounded-[7px] text-[13px] leading-[18px] transition-colors ${
+                        isActive
+                          ? 'bg-[rgba(20,118,255,0.10)] text-[#1476ff]'
+                          : 'text-[#333] hover:bg-[rgba(0,0,0,0.05)]'
+                      }`}
+                    >
+                      <span className="block truncate">{session.title}</span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(session.id); }}
+                      className="absolute right-[6px] top-1/2 -translate-y-1/2 hidden group-hover:flex w-[18px] h-[18px] items-center justify-center rounded text-[#aaa] hover:text-[#e11d48] hover:bg-[#fef2f2]"
+                      title="删除"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {isCollapsed && <div className="flex-1" />}
@@ -140,12 +157,20 @@ export function StudioPage() {
   const [activeId, setActiveId] = useState<string>(initialSession.id);
 
   const handleNewSession = useCallback(() => {
-    const session = createSession();
-    setSessions(prev => [session, ...prev]);
-    setActiveId(session.id);
-  }, []);
+    setSessions(prev => {
+      const current = prev.find(s => s.id === activeId);
+      // 当前已是空草稿，无需新建
+      if (current?.isDraft && current.state.msgs.length === 0) return prev;
+      // 清除其他空草稿，再创建新草稿
+      const cleaned = prev.filter(s => !(s.isDraft && s.state.msgs.length === 0));
+      const next = createSession();
+      setActiveId(next.id);
+      return [next, ...cleaned];
+    });
+  }, [activeId]);
 
   const handleSelectSession = useCallback((id: string) => {
+    setSessions(prev => prev.filter(s => !(s.isDraft && s.state.msgs.length === 0 && s.id !== id)));
     setActiveId(id);
   }, []);
 
@@ -156,8 +181,21 @@ export function StudioPage() {
       const title = firstUserMsg
         ? firstUserMsg.text.slice(0, 28) + (firstUserMsg.text.length > 28 ? '…' : '')
         : s.title;
-      return { ...s, state, title, updatedAt: Date.now() };
+      return { ...s, state, title, updatedAt: Date.now(), isDraft: firstUserMsg ? false : s.isDraft };
     }));
+  }, []);
+
+  const handleDeleteSession = useCallback((id: string) => {
+    setSessions(prev => {
+      const next = prev.filter(s => s.id !== id);
+      if (next.length === 0) {
+        const fallback = createSession();
+        setActiveId(fallback.id);
+        return [fallback];
+      }
+      setActiveId(cur => cur === id ? next[0].id : cur);
+      return next;
+    });
   }, []);
 
   return (
@@ -169,6 +207,7 @@ export function StudioPage() {
         activeId={activeId}
         onSelect={handleSelectSession}
         onNewSession={handleNewSession}
+        onDelete={handleDeleteSession}
       />
 
       {/* OctoBuild panels — keep all mounted, show active via visibility */}

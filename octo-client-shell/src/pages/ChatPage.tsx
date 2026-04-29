@@ -313,6 +313,7 @@ function ChatSidebar({
   currentId,
   onSelect,
   onNewChat,
+  onDelete,
 }: {
   isCollapsed: boolean;
   onCollapse: () => void;
@@ -320,6 +321,7 @@ function ChatSidebar({
   currentId: string | null;
   onSelect: (id: string) => void;
   onNewChat: () => void;
+  onDelete: (id: string) => void;
 }) {
   const sorted = [...conversations].sort((a, b) => b.updatedAt - a.updatedAt);
 
@@ -367,17 +369,25 @@ function ChatSidebar({
               {sorted.map(conv => {
                 const isActive = conv.id === currentId;
                 return (
-                  <button
-                    key={conv.id}
-                    onClick={() => onSelect(conv.id)}
-                    className={`w-full text-left px-[10px] py-[7px] rounded-[7px] text-[13px] leading-[18px] transition-colors ${
-                      isActive
-                        ? 'bg-[rgba(20,118,255,0.10)] text-[#1476ff]'
-                        : 'text-[#333] hover:bg-[rgba(0,0,0,0.05)]'
-                    }`}
-                  >
-                    <span className="block truncate">{conv.title}</span>
-                  </button>
+                  <div key={conv.id} className="group relative">
+                    <button
+                      onClick={() => onSelect(conv.id)}
+                      className={`w-full text-left px-[10px] py-[7px] pr-[28px] rounded-[7px] text-[13px] leading-[18px] transition-colors ${
+                        isActive
+                          ? 'bg-[rgba(20,118,255,0.10)] text-[#1476ff]'
+                          : 'text-[#333] hover:bg-[rgba(0,0,0,0.05)]'
+                      }`}
+                    >
+                      <span className="block truncate">{conv.title}</span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
+                      className="absolute right-[6px] top-1/2 -translate-y-1/2 hidden group-hover:flex w-[18px] h-[18px] items-center justify-center rounded text-[#aaa] hover:text-[#e11d48] hover:bg-[#fef2f2]"
+                      title="删除"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -543,6 +553,13 @@ export function ChatPage() {
     setDraft('');
   }, []);
 
+  const handleDeleteConv = useCallback((id: string) => {
+    clearTimeouts();
+    setIsGenerating(false);
+    setConversations(prev => prev.filter(c => c.id !== id));
+    setCurrentId(prev => prev === id ? null : prev);
+  }, []);
+
   const handleSelectConv = useCallback((id: string) => {
     clearTimeouts();
     setIsGenerating(false);
@@ -560,6 +577,7 @@ export function ChatPage() {
         currentId={currentId}
         onSelect={handleSelectConv}
         onNewChat={handleNewChat}
+        onDelete={handleDeleteConv}
       />
 
       {/* Right: main chat area */}

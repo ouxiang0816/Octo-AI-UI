@@ -2536,9 +2536,6 @@ export function ClientShell({
               </div>
               {!insightCollapsed && (
                 <div className="flex flex-col gap-[1px]">
-                  {activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'insight' && (
-                    <div className="px-[12px] py-[6px] rounded-[6px] text-[12px] bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium select-none">新对话</div>
-                  )}
                   {insightConversations.map((conversation) => {
                     const isActive = activeNav === 'chat' && currentConversationId === conversation.id;
                     return (
@@ -2575,7 +2572,7 @@ export function ClientShell({
                       </div>
                     );
                   })}
-                  {insightConversations.length === 0 && !(activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'insight') && (
+                  {insightConversations.length === 0 && (
                     <div className="px-[12px] py-[3px] text-[11px] text-[rgba(25,25,25,0.3)]">暂无对话</div>
                   )}
                 </div>
@@ -2604,9 +2601,6 @@ export function ClientShell({
               </div>
               {!makeCollapsed && (
                 <div className="flex flex-col gap-[1px]">
-                  {activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'make' && (
-                    <div className="px-[12px] py-[6px] rounded-[6px] text-[12px] bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium select-none">新对话</div>
-                  )}
                   {makeConversations.map((conversation) => {
                     const isActive = activeNav === 'chat' && currentConversationId === conversation.id;
                     return (
@@ -2643,7 +2637,7 @@ export function ClientShell({
                       </div>
                     );
                   })}
-                  {makeConversations.length === 0 && !(activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'make') && (
+                  {makeConversations.length === 0 && (
                     <div className="px-[12px] py-[3px] text-[11px] text-[rgba(25,25,25,0.3)]">暂无对话</div>
                   )}
                 </div>
