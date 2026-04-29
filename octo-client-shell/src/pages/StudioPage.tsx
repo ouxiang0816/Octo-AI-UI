@@ -172,7 +172,7 @@ export function StudioPage() {
       />
 
       {/* OctoBuild panels — keep all mounted, show active via visibility */}
-      <div className="flex-1 min-w-0 h-full relative overflow-hidden">
+      <div className="flex-1 min-w-0 h-full relative overflow-hidden" style={{ background: 'rgba(251,252,255,0.80)' }}>
         {sessions.map(session => (
           <div
             key={session.id}

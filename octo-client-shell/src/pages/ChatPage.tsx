@@ -565,7 +565,7 @@ export function ChatPage() {
       {/* Right: main chat area */}
       <div
         className="flex-1 min-w-0 flex flex-col h-full"
-        style={{ background: 'rgba(251,252,255,0.90)' }}
+        style={{ background: 'rgba(251,252,255,0.80)' }}
       >
         {msgs.length === 0 ? (
           /* Default welcome state */

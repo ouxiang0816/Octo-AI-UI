@@ -5064,19 +5064,23 @@ function ChatComposer({
     setSelectedSkillDetail(nextDetail);
   }, [composerSkills, selectedSkillDetail]);
 
-  // Sync agent pill with active workflow tab
+  // Sync agent pill with active workflow tab; also re-lock when conversationType/studioMode prop changes
   useEffect(() => {
-    const syncedAgent = activeWorkflow ? WORKFLOW_TO_AGENT[activeWorkflow] : 'auto';
+    const lockedAgent: ComposerAgent = studioMode ? 'creative'
+      : conversationType === 'insight' ? 'research'
+      : conversationType === 'make' ? 'demo'
+      : 'auto';
     if (activeWorkflow) {
+      const syncedAgent = WORKFLOW_TO_AGENT[activeWorkflow];
       setAgent(syncedAgent);
       setMode(AGENT_TO_MODE[syncedAgent]);
     } else {
-      setAgent('auto');
-      setMode('auto');
+      setAgent(lockedAgent);
+      setMode(AGENT_TO_MODE[lockedAgent]);
     }
     closePresetMenus();
     closeInsertMenu();
-  }, [activeWorkflow, closeInsertMenu, closePresetMenus, setMode]);
+  }, [activeWorkflow, conversationType, studioMode, closeInsertMenu, closePresetMenus, setMode]);
 
   const handleSelectAgent = (nextAgent: ComposerAgent) => {
     setAgent(nextAgent);
@@ -6101,7 +6105,7 @@ function ChatComposer({
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 4 }}
                       transition={{ duration: 0.12 }}
-                      className="absolute bottom-full right-0 mb-1 w-[272px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] p-3 z-[220]"
+                      className="absolute bottom-full left-0 mb-1 w-[272px] bg-white rounded-xl shadow-[0_-8px_24px_rgba(0,0,0,0.12)] border border-[rgba(25,25,25,0.08)] p-3 z-[220]"
                     >
                       <div>
                         <div className="flex items-center gap-1.5 text-[10px] font-medium text-[#999]">
