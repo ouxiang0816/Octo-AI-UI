@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   Lock,
   MoreHorizontal,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -137,6 +138,7 @@ interface ConversationItem {
   updatedAt: number;
   preview: string;
   workspace: OctoBuildState;
+  type: 'insight' | 'make';
 }
 
 interface KnowledgeItem {
@@ -1019,13 +1021,14 @@ function makeId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createConversation(title = '新对话'): ConversationItem {
+function createConversation(title = '新对话', type: 'insight' | 'make' = 'insight'): ConversationItem {
   return {
     id: makeId('conv'),
     title,
     updatedAt: Date.now(),
     preview: '开始你的第一个需求描述',
     workspace: createEmptyWorkspace(),
+    type,
   };
 }
 
@@ -1065,10 +1068,18 @@ function safeStorageRemove(key: string) {
   }
 }
 
+function inferConversationType(activeWorkflow?: string | null): 'insight' | 'make' {
+  if (activeWorkflow === 'demo') return 'make';
+  return 'insight';
+}
+
 function loadConversations(): ConversationItem[] {
-  const parsed = safeParse<ConversationItem[]>(safeStorageGet(STORAGE_KEYS.conversations), []);
+  const parsed = safeParse<any[]>(safeStorageGet(STORAGE_KEYS.conversations), []);
   if (!Array.isArray(parsed) || parsed.length === 0) return [];
-  return parsed;
+  return parsed.map((c) => ({
+    ...c,
+    type: c.type ?? inferConversationType(c.workspace?.activeWorkflow),
+  })) as ConversationItem[];
 }
 
 function loadSkills(): SkillMarketItem[] {
@@ -1490,6 +1501,9 @@ export function ClientShell({
   const [knowledgeTagFilter, setKnowledgeTagFilter] = useState('全部');
   const [knowledgeSortMode, setKnowledgeSortMode] = useState<'recent' | 'title'>('recent');
   const [referencedKnowledgeIds, setReferencedKnowledgeIds] = useState<string[]>([]);
+  const [insightCollapsed, setInsightCollapsed] = useState(false);
+  const [makeCollapsed, setMakeCollapsed] = useState(false);
+  const draftConversationTypeRef = useRef<'insight' | 'make'>('insight');
 
   const [collapsedKnowledgeGroups, setCollapsedKnowledgeGroups] = useState<Record<KnowledgeItem['group'], boolean>>({
     '领域专业知识': false,
@@ -1832,6 +1846,16 @@ export function ClientShell({
     [conversations],
   );
 
+  const insightConversations = useMemo(
+    () => conversations.filter(c => (c.type ?? 'insight') === 'insight').sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  );
+
+  const makeConversations = useMemo(
+    () => conversations.filter(c => c.type === 'make').sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations],
+  );
+
   const installedSkillsCount = useMemo(
     () => skills.filter((skill) => skill.enabled).length,
     [skills],
@@ -2066,11 +2090,12 @@ export function ClientShell({
     setActiveNav(nav);
   }, []);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback((type: 'insight' | 'make') => {
     draftLinkedConversationIdRef.current = null;
     setDraftWorkspaceState(createEmptyWorkspace());
     setDraftWorkspaceId(makeId('draft'));
     setCurrentConversationId(null);
+    draftConversationTypeRef.current = type;
     setActiveNav('chat');
   }, []);
 
@@ -2130,6 +2155,7 @@ export function ClientShell({
           preview: nextPreview,
           updatedAt: Date.now(),
           workspace: state,
+          type: draftConversationTypeRef.current,
         };
         draftLinkedConversationIdRef.current = seededConversation.id;
         setCurrentConversationId(seededConversation.id);
@@ -2213,6 +2239,7 @@ export function ClientShell({
     const workspaceId = conversation?.id ?? draftWorkspaceId;
     const workspaceTitle = conversation?.title ?? '新对话';
     const initialState = conversation?.workspace ?? draftWorkspaceState;
+    const conversationType = conversation?.type ?? draftConversationTypeRef.current;
     return (
       <OctoBuild
         embedded
@@ -2220,6 +2247,7 @@ export function ClientShell({
         title={workspaceTitle}
         initialState={initialState}
         onStateChange={updateCurrentWorkspace}
+        conversationType={conversationType}
       />
     );
   };
@@ -2480,123 +2508,192 @@ export function ClientShell({
             </div>
           )}
 
-          {/* Nav items */}
-          <div className="flex flex-col gap-[2px] px-[12px] pb-[4px]">
-            <button
-              onClick={handleNewChat}
-              title="新建对话"
-              className={`w-full relative flex items-center gap-[12px] px-[12px] py-[9px] rounded-[8px] transition-colors text-[14px] text-[#191919] hover:bg-[#f2f2f2] ${isNavCollapsed ? 'justify-center gap-0' : ''}`}
-            >
-              <span className="flex items-center justify-center text-[#191919]">
-                <MessageSquarePlus size={16} />
-              </span>
-              {!isNavCollapsed && (
-                <span className="whitespace-nowrap leading-[22px] text-[#191919]">新建对话</span>
+        </div>
+
+        {/* Insight / Make sections + nav items */}
+        {!isNavCollapsed ? (
+          <div className="flex-1 min-h-0 overflow-y-auto px-[12px] py-[4px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+
+            {/* ─── Octo Insight ─────────────────────────────── */}
+            <div className="mb-[4px]">
+              <div className="flex items-center px-[4px] py-[5px]">
+                <button
+                  type="button"
+                  onClick={() => setInsightCollapsed(v => !v)}
+                  className="flex items-center gap-[4px] flex-1 min-w-0 text-left"
+                >
+                  <ChevronRight size={12} className={`shrink-0 text-[rgba(25,25,25,0.4)] transition-transform ${insightCollapsed ? '' : 'rotate-90'}`} />
+                  <span className="text-[12px] font-semibold text-[rgba(25,25,25,0.55)] select-none">Octo Insight</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNewChat('insight')}
+                  title="新建 Insight 对话"
+                  className="w-5 h-5 flex items-center justify-center rounded-md text-[rgba(25,25,25,0.4)] hover:text-[#1476ff] hover:bg-[rgba(20,118,255,0.08)] transition-colors"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
+              {!insightCollapsed && (
+                <div className="flex flex-col gap-[1px]">
+                  {activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'insight' && (
+                    <div className="px-[12px] py-[6px] rounded-[6px] text-[12px] bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium select-none">新对话</div>
+                  )}
+                  {insightConversations.map((conversation) => {
+                    const isActive = activeNav === 'chat' && currentConversationId === conversation.id;
+                    return (
+                      <div key={conversation.id} className="group relative">
+                        {editingConversationId === conversation.id ? (
+                          <div className="flex items-center gap-1 px-[12px] py-[6px] rounded-[6px] bg-[#eff6ff] border border-[#dbeafe]">
+                            <input autoFocus value={editingTitle} onChange={(e) => setEditingTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleRenameSubmit(conversation.id);
+                                if (e.key === 'Escape') { setEditingConversationId(null); setEditingTitle(''); }
+                              }}
+                              className="flex-1 min-w-0 bg-transparent text-[12px] text-[#191919] outline-none border-b border-[#1476ff]"
+                            />
+                            <button onClick={() => handleRenameSubmit(conversation.id)} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><Check size={10} /></button>
+                            <button onClick={() => { setEditingConversationId(null); setEditingTitle(''); }} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><X size={10} /></button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => handleConversationClick(conversation.id)}
+                            className={`w-full text-left px-[12px] py-[6px] rounded-[6px] text-[12px] truncate transition-colors ${isActive ? 'bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium' : 'text-[#191919] hover:bg-[rgba(0,0,0,0.05)]'}`}
+                          >{conversation.title}</button>
+                        )}
+                        {editingConversationId !== conversation.id && (
+                          <div className="absolute right-[4px] top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-[4px]">
+                            <button onClick={(e) => { e.stopPropagation(); setEditingConversationId(conversation.id); setEditingTitle(conversation.title); }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#191919] hover:bg-[#f0f0f0]" title="重命名">
+                              <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conversation.id); }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#e11d48] hover:bg-[#fef2f2]" title="删除">
+                              <X size={10} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {insightConversations.length === 0 && !(activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'insight') && (
+                    <div className="px-[12px] py-[3px] text-[11px] text-[rgba(25,25,25,0.3)]">暂无对话</div>
+                  )}
+                </div>
               )}
+            </div>
+
+            {/* ─── Octo Make ────────────────────────────────── */}
+            <div className="mb-[8px]">
+              <div className="flex items-center px-[4px] py-[5px]">
+                <button
+                  type="button"
+                  onClick={() => setMakeCollapsed(v => !v)}
+                  className="flex items-center gap-[4px] flex-1 min-w-0 text-left"
+                >
+                  <ChevronRight size={12} className={`shrink-0 text-[rgba(25,25,25,0.4)] transition-transform ${makeCollapsed ? '' : 'rotate-90'}`} />
+                  <span className="text-[12px] font-semibold text-[rgba(25,25,25,0.55)] select-none">Octo Make</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNewChat('make')}
+                  title="新建 Make 对话"
+                  className="w-5 h-5 flex items-center justify-center rounded-md text-[rgba(25,25,25,0.4)] hover:text-[#1476ff] hover:bg-[rgba(20,118,255,0.08)] transition-colors"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
+              {!makeCollapsed && (
+                <div className="flex flex-col gap-[1px]">
+                  {activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'make' && (
+                    <div className="px-[12px] py-[6px] rounded-[6px] text-[12px] bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium select-none">新对话</div>
+                  )}
+                  {makeConversations.map((conversation) => {
+                    const isActive = activeNav === 'chat' && currentConversationId === conversation.id;
+                    return (
+                      <div key={conversation.id} className="group relative">
+                        {editingConversationId === conversation.id ? (
+                          <div className="flex items-center gap-1 px-[12px] py-[6px] rounded-[6px] bg-[#eff6ff] border border-[#dbeafe]">
+                            <input autoFocus value={editingTitle} onChange={(e) => setEditingTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleRenameSubmit(conversation.id);
+                                if (e.key === 'Escape') { setEditingConversationId(null); setEditingTitle(''); }
+                              }}
+                              className="flex-1 min-w-0 bg-transparent text-[12px] text-[#191919] outline-none border-b border-[#1476ff]"
+                            />
+                            <button onClick={() => handleRenameSubmit(conversation.id)} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><Check size={10} /></button>
+                            <button onClick={() => { setEditingConversationId(null); setEditingTitle(''); }} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><X size={10} /></button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => handleConversationClick(conversation.id)}
+                            className={`w-full text-left px-[12px] py-[6px] rounded-[6px] text-[12px] truncate transition-colors ${isActive ? 'bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium' : 'text-[#191919] hover:bg-[rgba(0,0,0,0.05)]'}`}
+                          >{conversation.title}</button>
+                        )}
+                        {editingConversationId !== conversation.id && (
+                          <div className="absolute right-[4px] top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-[4px]">
+                            <button onClick={(e) => { e.stopPropagation(); setEditingConversationId(conversation.id); setEditingTitle(conversation.title); }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#191919] hover:bg-[#f0f0f0]" title="重命名">
+                              <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conversation.id); }}
+                              className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#e11d48] hover:bg-[#fef2f2]" title="删除">
+                              <X size={10} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {makeConversations.length === 0 && !(activeNav === 'chat' && !currentConversationId && draftConversationTypeRef.current === 'make') && (
+                    <div className="px-[12px] py-[3px] text-[11px] text-[rgba(25,25,25,0.3)]">暂无对话</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ─── 技能库 / 资产库 ───────────────────────────── */}
+            <div className="flex flex-col gap-[2px] pt-[6px]" style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+              {NAV_ITEMS.map((item) => {
+                const isActive = activeNav === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    onClick={() => handleNavClick(item.key)}
+                    title={item.label}
+                    className={`w-full relative flex items-center gap-[12px] px-[12px] py-[9px] rounded-[8px] transition-colors text-[14px] ${isActive ? 'bg-[rgba(239,246,255,0.85)] text-[#0a59f7]' : 'text-[#191919] hover:bg-[#f2f2f2]'}`}
+                  >
+                    <span className={`flex items-center justify-center ${isActive ? 'text-[#0a59f7]' : 'text-[#191919]'}`}><item.icon size={16} /></span>
+                    <span className={`whitespace-nowrap leading-[22px] ${isActive ? 'font-medium text-[#0a59f7]' : 'text-[#191919]'}`}>{item.label}</span>
+                    {isActive && <span className="absolute right-[4px] top-1/2 -translate-y-1/2 h-[32px] w-[4px] rounded-[99px] bg-[#0a59f7]" />}
+                  </button>
+                );
+              })}
+            </div>
+
+          </div>
+        ) : (
+          /* ─── 收起状态 ─────────────────────────────────────── */
+          <div className="flex-1 min-h-0 flex flex-col items-center gap-[2px] px-[8px] py-[4px]">
+            <button type="button" onClick={() => handleNewChat('insight')} title="新建 Insight 对话"
+              className="w-8 h-8 flex items-center justify-center rounded-[8px] text-[#191919] hover:bg-[#f2f2f2] transition-colors">
+              <Users size={16} />
             </button>
+            <button type="button" onClick={() => handleNewChat('make')} title="新建 Make 对话"
+              className="w-8 h-8 flex items-center justify-center rounded-[8px] text-[#191919] hover:bg-[#f2f2f2] transition-colors">
+              <Play size={16} />
+            </button>
+            <div className="w-5 h-px bg-[rgba(0,0,0,0.08)] my-[2px]" />
             {NAV_ITEMS.map((item) => {
               const isActive = activeNav === item.key;
               return (
-                <button
-                  key={item.key}
-                  onClick={() => handleNavClick(item.key)}
-                  title={item.label}
-                  className={`w-full relative flex items-center gap-[12px] px-[12px] py-[9px] rounded-[8px] transition-colors text-[14px] ${
-                    isActive
-                      ? 'bg-[rgba(239,246,255,0.85)] text-[#0a59f7]'
-                      : 'text-[#191919] hover:bg-[#f2f2f2]'
-                  } ${isNavCollapsed ? 'justify-center gap-0' : ''}`}
+                <button key={item.key} onClick={() => handleNavClick(item.key)} title={item.label}
+                  className={`w-8 h-8 flex items-center justify-center rounded-[8px] transition-colors ${isActive ? 'bg-[rgba(239,246,255,0.85)] text-[#0a59f7]' : 'text-[#191919] hover:bg-[#f2f2f2]'}`}
                 >
-                  <span className={`flex items-center justify-center ${isActive ? 'text-[#0a59f7]' : 'text-[#191919]'}`}>
-                    <item.icon size={16} />
-                  </span>
-                  {!isNavCollapsed && (
-                    <span className={`whitespace-nowrap leading-[22px] ${isActive ? 'font-medium text-[#0a59f7]' : 'text-[#191919]'}`}>
-                      {item.label}
-                    </span>
-                  )}
-                  {isActive && !isNavCollapsed && (
-                    <span className="absolute right-[4px] top-1/2 -translate-y-1/2 h-[32px] w-[4px] rounded-[99px] bg-[#0a59f7]" />
-                  )}
+                  <item.icon size={16} />
                 </button>
               );
             })}
           </div>
-        </div>
-
-        {/* History list */}
-        {!isNavCollapsed && (
-          <div className="flex-1 min-h-0 overflow-y-auto px-[12px] py-[4px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <div className="text-[12px] font-medium text-[rgba(25,25,25,0.45)] tracking-wide px-[12px] py-[4px]">
-              历史记录
-            </div>
-            {sortedConversations.length === 0 ? (
-              <div className="px-[12px] py-[4px] text-[12px] text-[rgba(25,25,25,0.4)]">
-                暂无对话记录
-              </div>
-            ) : (
-              <div className="flex flex-col gap-[2px]">
-                {sortedConversations.map((conversation) => {
-                  const isActive = activeNav === 'chat' && currentConversationId === conversation.id;
-                  return (
-                    <div key={conversation.id} className="group relative">
-                      {editingConversationId === conversation.id ? (
-                        <div className="flex items-center gap-1 px-[12px] py-[6px] rounded-[6px] bg-[#eff6ff] border border-[#dbeafe]">
-                          <input
-                            autoFocus
-                            value={editingTitle}
-                            onChange={(event) => setEditingTitle(event.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleRenameSubmit(conversation.id);
-                              if (e.key === 'Escape') {
-                                setEditingConversationId(null);
-                                setEditingTitle('');
-                              }
-                            }}
-                            className="flex-1 min-w-0 bg-transparent text-[12px] text-[#191919] outline-none border-b border-[#1476ff]"
-                          />
-                          <button onClick={() => handleRenameSubmit(conversation.id)} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><Check size={10} /></button>
-                          <button onClick={() => { setEditingConversationId(null); setEditingTitle(''); }} className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-white/60"><X size={10} /></button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleConversationClick(conversation.id)}
-                          className={`w-full text-left px-[12px] py-[6px] rounded-[6px] text-[12px] truncate transition-colors ${
-                            isActive
-                              ? 'bg-[rgba(20,118,255,0.12)] text-[#0a59f7] font-medium'
-                              : 'text-[#191919] hover:bg-[rgba(0,0,0,0.05)]'
-                          }`}
-                        >
-                          {conversation.title}
-                        </button>
-                      )}
-                      {editingConversationId !== conversation.id && (
-                        <div className="absolute right-[4px] top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-[4px] px-[4px] py-[4px]">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setEditingConversationId(conversation.id); setEditingTitle(conversation.title); }}
-                            className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#191919] hover:bg-[#f0f0f0]"
-                            title="重命名"
-                          >
-                            <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteConversation(conversation.id); }}
-                            className="w-5 h-5 flex items-center justify-center rounded text-[#888] hover:text-[#e11d48] hover:bg-[#fef2f2]"
-                            title="删除"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         )}
-        {isNavCollapsed && <div className="flex-1 min-h-0" />}
 
         <div className={`shrink-0 ${isNavCollapsed ? 'px-[8px] py-[8px]' : 'px-[12px] py-[8px]'}`}>
           {isNavCollapsed ? (

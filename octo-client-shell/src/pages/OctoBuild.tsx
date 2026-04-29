@@ -4831,6 +4831,7 @@ function ChatComposer({
   onTogglePrototypeComponent,
   canvaState,
   studioMode = false,
+  conversationType,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -4844,11 +4845,16 @@ function ChatComposer({
   onTogglePrototypeComponent: (componentId: string) => void;
   canvaState?: CanvaState | null;
   studioMode?: boolean;
+  conversationType?: 'insight' | 'make';
 }) {
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
-  const [agent, setAgent] = useState<ComposerAgent>(studioMode ? 'creative' : 'auto');
+  const initialAgent: ComposerAgent = studioMode ? 'creative'
+    : conversationType === 'insight' ? 'research'
+    : conversationType === 'make' ? 'demo'
+    : 'auto';
+  const [agent, setAgent] = useState<ComposerAgent>(initialAgent);
   // 意图识别
   const [intentDismissed, setIntentDismissed] = useState(false);
   const detectedIntent = useMemo(() => {
@@ -5955,8 +5961,8 @@ function ChatComposer({
               <Plus size={16} />
             </button>
           </div>
-          {/* Agent selector — hidden in Studio mode */}
-          {!studioMode && (
+          {/* Agent selector — hidden in Studio mode and when conversationType is locked */}
+          {!studioMode && !conversationType && (
           <div className="relative shrink-0" ref={agentMenuRef}>
             <div className="flex items-center h-8 rounded-xl transition-colors bg-[#f1f5ff]">
               <button
@@ -6977,6 +6983,7 @@ function ChatPanel({
   selectedPrototypeComponentIds,
   onTogglePrototypeComponent,
   studioMode = false,
+  conversationType,
 }: {
   activeWorkflow: WorkflowType | null;
   deliverables: WorkflowType[];
@@ -6999,6 +7006,7 @@ function ChatPanel({
   selectedPrototypeComponentIds: string[];
   onTogglePrototypeComponent: (componentId: string) => void;
   studioMode?: boolean;
+  conversationType?: 'insight' | 'make';
 }) {
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<ComposerMode>('auto');
@@ -7563,6 +7571,7 @@ function ChatPanel({
         selectedPrototypeComponentIds={selectedPrototypeComponentIds}
         onTogglePrototypeComponent={onTogglePrototypeComponent}
         studioMode={studioMode}
+        conversationType={conversationType}
       />
     </div>
   );
@@ -7577,10 +7586,11 @@ interface OctoBuildProps {
   title?: string;
   embedded?: boolean;
   studioMode?: boolean;
+  conversationType?: 'insight' | 'make';
 }
 
 // ─── OctoBuild ────────────────────────────────────────────────────────────────
-export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, title, embedded = false, studioMode = false }: OctoBuildProps = {}) {
+export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, title, embedded = false, studioMode = false, conversationType }: OctoBuildProps = {}) {
   const MIN_CHAT_WIDTH = 320;
   const MIN_CANVAS_WIDTH = 460;
   const [deliverables, setDeliverables] = useState<WorkflowType[]>(initialState?.deliverables ?? []);
@@ -7916,6 +7926,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
           selectedPrototypeComponentIds={selectedPrototypeComponentIds}
           onTogglePrototypeComponent={handleTogglePrototypeComponent}
           studioMode={studioMode}
+          conversationType={conversationType}
         />
       </div>
 
