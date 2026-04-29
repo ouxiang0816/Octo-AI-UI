@@ -1441,6 +1441,7 @@ interface ClientShellProps {
   onNavHandled?: () => void;
   onOpenSearch?: () => void;
   showWindowControls?: boolean;
+  hideSidebarHeader?: boolean;
   onWindowClose?: () => void;
   onWindowMinimize?: () => void;
   onWindowToggleFullscreen?: () => void;
@@ -1455,6 +1456,7 @@ export function ClientShell({
   onNavHandled,
   onOpenSearch,
   showWindowControls = true,
+  hideSidebarHeader = false,
   onWindowClose,
   onWindowMinimize,
   onWindowToggleFullscreen,
@@ -2281,14 +2283,14 @@ export function ClientShell({
         )}
 
         {/* Brand */}
-        {!isNavCollapsed && (
+        {!isNavCollapsed && !hideSidebarHeader && (
           <div className={`flex items-center gap-[10px] px-[16px] pb-[14px] shrink-0 ${showWindowControls ? 'pt-[14px]' : 'pt-[22px]'}`}>
             <img src={unionIcon} alt="" aria-hidden="true" className="shrink-0 w-[30px] h-[30px]" />
             <span className="font-semibold text-[20px] text-[#191919] leading-normal">Octo AI</span>
           </div>
         )}
 
-        {!isNavCollapsed && (
+        {!isNavCollapsed && !hideSidebarHeader && (
           <div className="px-[12px] pb-[12px] shrink-0">
             <button
               type="button"
@@ -3084,12 +3086,166 @@ export function ClientShell({
         </main>
       </section>
 
+      <WorkspacePanel />
+
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#0f172a] text-white text-[12px] px-4 py-2 rounded-full shadow-[0_10px_30px_rgba(2,6,23,0.25)] z-[680]">
           {toast}
         </div>
       )}
     </div>
+  );
+}
+
+// ─── WorkspacePanel ────────────────────────────────────────────────────────────
+const WS_DATA = {
+  local: ['需求分析报告.docx', '竞品分析.pdf', '用户故事地图.md'],
+  cloud: ['产品路线图.xlsx', '设计规范文档.figma', '版本迭代计划.pptx'],
+  skills: ['市场分析助手.skill', '文档撰写助手.skill', 'UX评审助手.skill'],
+  memory: ['用户偏好记录.mem', '项目背景知识.mem'],
+  uploads: ['用户访谈录音.mp3', '竞品截图合集.zip', '用户反馈汇总.csv'],
+};
+
+function WsFileItem({ filename }: { filename: string }) {
+  const dot = filename.lastIndexOf('.');
+  const base = dot > -1 ? filename.slice(0, dot) : filename;
+  const ext = dot > -1 ? filename.slice(dot) : '';
+  return (
+    <div className="flex items-center gap-[6px] px-[10px] py-[5px] rounded-[6px] hover:bg-[rgba(0,0,0,0.04)] cursor-default">
+      <FileText size={13} className="shrink-0 text-[rgba(25,25,25,0.38)]" />
+      <span className="text-[12px] text-[#333] leading-[18px] truncate flex-1 min-w-0">{base}</span>
+      {ext && <span className="text-[10px] text-[rgba(25,25,25,0.35)] shrink-0 font-mono">{ext}</span>}
+    </div>
+  );
+}
+
+function WsSubSection({
+  title,
+  files,
+  isCollapsed,
+  onToggle,
+}: {
+  title: string;
+  files: string[];
+  isCollapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="mb-[2px]">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-[4px] px-[4px] py-[4px] rounded-[6px] hover:bg-[rgba(0,0,0,0.04)] transition-colors"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 text-[rgba(25,25,25,0.35)] transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+        />
+        <span className="text-[11px] font-medium text-[rgba(25,25,25,0.48)] tracking-wide select-none">{title}</span>
+      </button>
+      {!isCollapsed && (
+        <div className="mt-[1px] mb-[4px]">
+          {files.map(f => <WsFileItem key={f} filename={f} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WorkspacePanel() {
+  const [sectionCollapsed, setSectionCollapsed] = useState({ workFiles: false, context: false });
+  const [subCollapsed, setSubCollapsed] = useState({
+    local: false, cloud: false, skills: false, memory: false, uploads: false,
+  });
+
+  return (
+    <aside
+      className="shrink-0 flex flex-col h-full"
+      style={{
+        width: 220,
+        background: 'rgba(248,249,252,0.85)',
+        borderLeft: '1px solid rgba(0,0,0,0.07)',
+      }}
+    >
+      {/* Title */}
+      <div
+        className="h-[54px] shrink-0 flex items-center px-[16px]"
+        style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}
+      >
+        <span className="text-[14px] font-semibold text-[#191919] select-none">WorkSpace</span>
+      </div>
+
+      {/* Scrollable content */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-[10px] py-[8px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* 工作文件 */}
+        <div className="mb-[8px]">
+          <button
+            type="button"
+            onClick={() => setSectionCollapsed(p => ({ ...p, workFiles: !p.workFiles }))}
+            className="w-full flex items-center gap-[6px] px-[4px] py-[5px] rounded-[7px] hover:bg-[rgba(0,0,0,0.04)] transition-colors mb-[2px]"
+          >
+            <ChevronRight
+              size={14}
+              className={`shrink-0 text-[rgba(25,25,25,0.45)] transition-transform ${sectionCollapsed.workFiles ? '' : 'rotate-90'}`}
+            />
+            <span className="text-[13px] font-medium text-[#191919] select-none">工作文件</span>
+          </button>
+          {!sectionCollapsed.workFiles && (
+            <div className="ml-[8px]">
+              <WsSubSection
+                title="本地文件"
+                files={WS_DATA.local}
+                isCollapsed={subCollapsed.local}
+                onToggle={() => setSubCollapsed(p => ({ ...p, local: !p.local }))}
+              />
+              <WsSubSection
+                title="云端文件"
+                files={WS_DATA.cloud}
+                isCollapsed={subCollapsed.cloud}
+                onToggle={() => setSubCollapsed(p => ({ ...p, cloud: !p.cloud }))}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 上下文 */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setSectionCollapsed(p => ({ ...p, context: !p.context }))}
+            className="w-full flex items-center gap-[6px] px-[4px] py-[5px] rounded-[7px] hover:bg-[rgba(0,0,0,0.04)] transition-colors mb-[2px]"
+          >
+            <ChevronRight
+              size={14}
+              className={`shrink-0 text-[rgba(25,25,25,0.45)] transition-transform ${sectionCollapsed.context ? '' : 'rotate-90'}`}
+            />
+            <span className="text-[13px] font-medium text-[#191919] select-none">上下文</span>
+          </button>
+          {!sectionCollapsed.context && (
+            <div className="ml-[8px]">
+              <WsSubSection
+                title="技能"
+                files={WS_DATA.skills}
+                isCollapsed={subCollapsed.skills}
+                onToggle={() => setSubCollapsed(p => ({ ...p, skills: !p.skills }))}
+              />
+              <WsSubSection
+                title="记忆"
+                files={WS_DATA.memory}
+                isCollapsed={subCollapsed.memory}
+                onToggle={() => setSubCollapsed(p => ({ ...p, memory: !p.memory }))}
+              />
+              <WsSubSection
+                title="上传的文件"
+                files={WS_DATA.uploads}
+                isCollapsed={subCollapsed.uploads}
+                onToggle={() => setSubCollapsed(p => ({ ...p, uploads: !p.uploads }))}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
   );
 }
 

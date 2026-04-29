@@ -4622,6 +4622,17 @@ function IntroBubble() {
   );
 }
 
+// ─── StudioIntroBubble ────────────────────────────────────────────────────────
+function StudioIntroBubble() {
+  return (
+    <div className="w-full">
+      <p className="text-[14px] text-[#333] leading-[20px] whitespace-pre-wrap">
+        你好！我是 Octo Studio。{'\n\n'}描述你想生成的内容，AI 将为你创作图片或视频效果{'\n\n'}· 图片生成：根据描述创作高质量创意图片{'\n'}· 视频生成：根据描述生成流畅的创意视频{'\n'}· 图片编辑：上传图片并进行 AI 智能修图{'\n\n'}支持多轮迭代，随时调整生成效果。
+      </p>
+    </div>
+  );
+}
+
 // ─── ChatComposer ─────────────────────────────────────────────────────────────
 const AGENT_OPTIONS: { id: ComposerAgent; label: string; icon: React.ReactNode }[] = [
   { id: 'auto',       label: '通用问答',     icon: <Sparkles size={12} /> },
@@ -4819,6 +4830,7 @@ function ChatComposer({
   selectedPrototypeComponentIds,
   onTogglePrototypeComponent,
   canvaState,
+  studioMode = false,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -4831,11 +4843,12 @@ function ChatComposer({
   selectedPrototypeComponentIds: string[];
   onTogglePrototypeComponent: (componentId: string) => void;
   canvaState?: CanvaState | null;
+  studioMode?: boolean;
 }) {
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [showSkillsMenu, setShowSkillsMenu] = useState(false);
-  const [agent, setAgent] = useState<ComposerAgent>('auto');
+  const [agent, setAgent] = useState<ComposerAgent>(studioMode ? 'creative' : 'auto');
   // 意图识别
   const [intentDismissed, setIntentDismissed] = useState(false);
   const detectedIntent = useMemo(() => {
@@ -5942,7 +5955,8 @@ function ChatComposer({
               <Plus size={16} />
             </button>
           </div>
-          {/* Agent selector */}
+          {/* Agent selector — hidden in Studio mode */}
+          {!studioMode && (
           <div className="relative shrink-0" ref={agentMenuRef}>
             <div className="flex items-center h-8 rounded-xl transition-colors bg-[#f1f5ff]">
               <button
@@ -5958,6 +5972,7 @@ function ChatComposer({
               </button>
             </div>
           </div>
+          )}
           {agent === 'creative' && (
             <>
               <div className="relative shrink-0 z-[60]" ref={creativeMediaMenuRef}>
@@ -6961,6 +6976,7 @@ function ChatPanel({
   linkedPrototypeComponents,
   selectedPrototypeComponentIds,
   onTogglePrototypeComponent,
+  studioMode = false,
 }: {
   activeWorkflow: WorkflowType | null;
   deliverables: WorkflowType[];
@@ -6982,6 +6998,7 @@ function ChatPanel({
   linkedPrototypeComponents: LinkedPrototypeComponent[];
   selectedPrototypeComponentIds: string[];
   onTogglePrototypeComponent: (componentId: string) => void;
+  studioMode?: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<ComposerMode>('auto');
@@ -7360,10 +7377,10 @@ function ChatPanel({
           background: #D9D9D9;
         }
       `}</style>
-      <LeftPanelHeader onBack={onBack} title={title} />
+      {!studioMode && <LeftPanelHeader onBack={onBack} title={title} />}
 
       <div className="octo-chat-scroll flex-1 overflow-y-scroll overflow-x-hidden p-5 space-y-5 min-h-0">
-        {msgs.length === 0 && <IntroBubble />}
+        {msgs.length === 0 && (studioMode ? <StudioIntroBubble /> : <IntroBubble />)}
         <AnimatePresence initial={false}>
           {msgs.map(msg => (
             <motion.div
@@ -7545,6 +7562,7 @@ function ChatPanel({
         linkedPrototypeComponents={linkedPrototypeComponents}
         selectedPrototypeComponentIds={selectedPrototypeComponentIds}
         onTogglePrototypeComponent={onTogglePrototypeComponent}
+        studioMode={studioMode}
       />
     </div>
   );
@@ -7558,10 +7576,11 @@ interface OctoBuildProps {
   onBack?: () => void;
   title?: string;
   embedded?: boolean;
+  studioMode?: boolean;
 }
 
 // ─── OctoBuild ────────────────────────────────────────────────────────────────
-export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, title, embedded = false }: OctoBuildProps = {}) {
+export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, title, embedded = false, studioMode = false }: OctoBuildProps = {}) {
   const MIN_CHAT_WIDTH = 320;
   const MIN_CANVAS_WIDTH = 460;
   const [deliverables, setDeliverables] = useState<WorkflowType[]>(initialState?.deliverables ?? []);
@@ -7896,6 +7915,7 @@ export function OctoBuild({ initialState, workspaceId, onStateChange, onBack, ti
           linkedPrototypeComponents={linkedPrototypeComponents}
           selectedPrototypeComponentIds={selectedPrototypeComponentIds}
           onTogglePrototypeComponent={handleTogglePrototypeComponent}
+          studioMode={studioMode}
         />
       </div>
 
