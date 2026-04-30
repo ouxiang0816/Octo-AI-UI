@@ -4633,6 +4633,28 @@ function StudioIntroBubble() {
   );
 }
 
+// ─── InsightIntroBubble ───────────────────────────────────────────────────────
+function InsightIntroBubble() {
+  return (
+    <div className="w-full">
+      <p className="text-[14px] text-[#333] leading-[20px] whitespace-pre-wrap">
+        你好！我是 Octo Insight。{'\n\n'}描述你的研究需求，我将帮你高效完成用户研究工作{'\n\n'}· 访谈观点洞察：快速提炼访谈记录中的关键观点{'\n'}· 评估问题整理：整理与归类用户评估中发现的问题{'\n'}· 用研知识问答：基于知识库回答用研相关问题{'\n\n'}每轮对话支持多次迭代，持续深入分析。
+      </p>
+    </div>
+  );
+}
+
+// ─── MakeIntroBubble ──────────────────────────────────────────────────────────
+function MakeIntroBubble() {
+  return (
+    <div className="w-full">
+      <p className="text-[14px] text-[#333] leading-[20px] whitespace-pre-wrap">
+        你好！我是 Octo Make。{'\n\n'}描述你的产品需求，我将帮你快速构建可交互的演示原型{'\n\n'}· 原型生成：根据描述自动生成可点击的界面原型{'\n'}· 组件复用：引用已有设计组件，保持一致的设计语言{'\n'}· 迭代优化：基于反馈快速调整原型内容与交互逻辑{'\n\n'}支持多轮迭代，随时调整原型效果。
+      </p>
+    </div>
+  );
+}
+
 // ─── ChatComposer ─────────────────────────────────────────────────────────────
 const AGENT_OPTIONS: { id: ComposerAgent; label: string; icon: React.ReactNode }[] = [
   { id: 'auto',       label: '通用问答',     icon: <Sparkles size={12} /> },
@@ -7392,7 +7414,12 @@ function ChatPanel({
       {!studioMode && <LeftPanelHeader onBack={onBack} title={title} />}
 
       <div className="octo-chat-scroll flex-1 overflow-y-scroll overflow-x-hidden p-5 space-y-5 min-h-0">
-        {msgs.length === 0 && (studioMode ? <StudioIntroBubble /> : <IntroBubble />)}
+        {msgs.length === 0 && (
+          studioMode ? <StudioIntroBubble /> :
+          conversationType === 'insight' ? <InsightIntroBubble /> :
+          conversationType === 'make' ? <MakeIntroBubble /> :
+          <IntroBubble />
+        )}
         <AnimatePresence initial={false}>
           {msgs.map(msg => (
             <motion.div

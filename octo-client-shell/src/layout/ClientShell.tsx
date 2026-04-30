@@ -2091,12 +2091,19 @@ export function ClientShell({
   }, []);
 
   const handleNewChat = useCallback((type: 'insight' | 'make') => {
-    draftLinkedConversationIdRef.current = null;
-    setDraftWorkspaceState(createEmptyWorkspace());
-    setDraftWorkspaceId(makeId('draft'));
-    setCurrentConversationId(null);
-    draftConversationTypeRef.current = type;
-    setActiveNav('chat');
+    // 若已有同类型的空「新对话」，直接切过去，避免重复创建
+    setConversations(prev => {
+      const existing = prev.find(c => c.type === type && c.workspace.msgs.length === 0 && c.title.startsWith('新对话'));
+      if (existing) {
+        setCurrentConversationId(existing.id);
+        setActiveNav('chat');
+        return prev;
+      }
+      const newConv = createConversation('新对话', type);
+      setCurrentConversationId(newConv.id);
+      setActiveNav('chat');
+      return [newConv, ...prev];
+    });
   }, []);
 
   const handleConversationClick = useCallback((conversationId: string) => {

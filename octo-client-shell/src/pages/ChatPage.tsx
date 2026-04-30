@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   MessageSquarePlus, Settings, Plus, Send, ChevronDown, X,
 } from 'lucide-react';
-import unionIcon from '../assets/icons/union.svg';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface ChatMsg {
@@ -337,10 +336,7 @@ function ChatSidebar({
       {/* Title area */}
       <div className={`h-[54px] shrink-0 flex items-center ${isCollapsed ? 'justify-center px-[8px]' : 'px-[16px]'}`}>
         {!isCollapsed && (
-          <div className="flex items-center gap-[8px] flex-1 min-w-0">
-            <img src={unionIcon} alt="" aria-hidden className="w-[20px] h-[20px] shrink-0" />
-            <span className="text-[16px] font-semibold text-[#191919] leading-none select-none">Chat</span>
-          </div>
+          <span className="text-[16px] font-semibold text-[#191919] leading-none select-none">Chat</span>
         )}
       </div>
 
